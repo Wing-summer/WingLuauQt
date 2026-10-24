@@ -1,0 +1,622 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WingLuauQt binding policy",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "common": {
+      "type": "object",
+      "properties": {
+        "types": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^Q[A-Za-z0-9_]+$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "alias": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "methods": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Qt value/object aliases only. Containers convert directly to Luau tables and have no aliases or constructors."
+        }
+      },
+      "additionalProperties": false
+    },
+    "qt": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "const": "qt"
+        },
+        "discovery": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "modules": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "bases": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "blacklist": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dependencies": {
+              "const": "transitive"
+            }
+          },
+          "additionalProperties": false
+        },
+        "widgets": {
+          "type": "object",
+          "properties": {
+            "include": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "extra_types": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "exclude": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "expose_qwidget_base": {
+              "type": "boolean"
+            },
+            "hide_unselected": {
+              "type": "boolean"
+            },
+            "dependency_api": {
+              "const": "minimal",
+              "deprecated": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "ui_tools": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "allowed_roots": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "root_classes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true,
+              "description": "Qt UI root classes accepted by the generated fallback; the host resolver has priority."
+            }
+          },
+          "additionalProperties": false
+        },
+        "target_version": {
+          "type": "string",
+          "pattern": "^6\\.\\d+\\.\\d+$"
+        },
+        "api_indexes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "exclude": {
+      "type": "object",
+      "properties": {
+        "classes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "lsp": {
+      "type": "object",
+      "properties": {
+        "server": {
+          "const": "luau-lsp"
+        },
+        "syntax": {
+          "const": "luau"
+        },
+        "variadic_fixture": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ir": {
+      "type": "object"
+    },
+    "_generated": {
+      "type": "object"
+    },
+    "extensions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "headers",
+          "classes"
+        ],
+        "properties": {
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include_dirs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "defines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "namespace": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "classes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "expose_base": {
+                  "enum": [
+                    "QObject",
+                    "QWidget"
+                  ],
+                  "default": "QObject"
+                },
+                "constructible": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "access": {
+                  "oneOf": [
+                    {
+                      "enum": [
+                        "public",
+                        "protected",
+                        "private"
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": {
+                        "enum": [
+                          "public",
+                          "protected",
+                          "private"
+                        ]
+                      }
+                    }
+                  ],
+                  "default": [
+                    "public"
+                  ]
+                },
+                "members": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "methods",
+                      "properties",
+                      "fields"
+                    ]
+                  },
+                  "default": [
+                    "methods",
+                    "properties",
+                    "fields"
+                  ]
+                },
+                "non_public": {
+                  "enum": [
+                    "metaobject",
+                    "friend"
+                  ],
+                  "default": "metaobject"
+                },
+                "binding": {
+                  "enum": [
+                    "class",
+                    "functions"
+                  ],
+                  "default": "class"
+                },
+                "include": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": [
+                    "*"
+                  ]
+                },
+                "exclude": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": []
+                },
+                "context": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "QObject *",
+                      "const QObject *"
+                    ]
+                  },
+                  "default": []
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "compile_moc": {
+            "type": "boolean",
+            "default": true
+          },
+          "module": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "_extensions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "native_mode": {
+          "enum": [
+            "copy",
+            "reference"
+          ],
+          "default": "copy"
+        },
+        "host_targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "definitions_directory": {
+          "type": "string",
+          "minLength": 1
+        },
+        "helpers": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "execution",
+              "require"
+            ]
+          },
+          "uniqueItems": true,
+          "default": [],
+          "description": "Optional standalone execution and require helpers; embedded hosts own these operations by default."
+        }
+      },
+      "additionalProperties": false
+    },
+    "extra_bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "module": {
+            "type": "string"
+          },
+          "register": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "definitions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "register"
+        ]
+      }
+    },
+    "native_apis": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include_dirs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "classes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "types": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "namespace": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "namespace",
+                "name"
+              ]
+            }
+          },
+          "enum_types": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "namespace": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "namespace",
+                "name"
+              ]
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "module": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
+                },
+                "include": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "exclude": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "rename": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "namespace"
+              ]
+            }
+          },
+          "integer_type": {
+            "type": "string"
+          },
+          "unsigned_integer_type": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "headers"
+        ]
+      }
+    },
+    "callback_sets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "module": {
+            "type": "string"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "functions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "parameters": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "name",
+                      "type"
+                    ]
+                  }
+                },
+                "variadic": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "type"
+                  ]
+                },
+                "returns": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "native": {
+                  "type": "string",
+                  "pattern": "^&?[A-Za-z_]\\w*(?:::[A-Za-z_]\\w*)*$"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "name"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "functions"
+        ]
+      }
+    },
+    "naming": {
+      "type": "object",
+      "properties": {
+        "functions": {
+          "enum": [
+            "native",
+            "snake_case"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

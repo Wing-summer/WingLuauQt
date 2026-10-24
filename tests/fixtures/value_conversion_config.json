@@ -1,0 +1,13 @@
+{
+  "qt": {
+    "widgets": {
+      "extra_types": [
+        "QSplitter"
+      ],
+      "include": [
+        "QWidget",
+        "QComboBox"
+      ]
+    }
+  }
+}

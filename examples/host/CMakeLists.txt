@@ -1,0 +1,28 @@
+# Copyright (c) 2026, wingsummer
+# SPDX-License-Identifier: BSD-3-Clause
+# See LICENSE in the project root for license information.
+
+cmake_minimum_required(VERSION 3.24)
+project(BindingExample LANGUAGES CXX)
+if(NOT BINDINGS_SOURCE_DIR)
+  message(FATAL_ERROR "Pass -DBINDINGS_SOURCE_DIR=<generated static library project>")
+endif()
+option(HOST_NATIVE_REFERENCE "Host owns native implementation and meta-object code" OFF)
+if(HOST_NATIVE_REFERENCE)
+  set(ExampleBindings_HOST_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "Example native input root")
+  find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+  add_library(ExampleHostServices STATIC ../native/api.hpp)
+  set_target_properties(ExampleHostServices PROPERTIES AUTOMOC ON LINKER_LANGUAGE CXX)
+  target_include_directories(ExampleHostServices PUBLIC "${BINDINGS_SOURCE_DIR}/include")
+  target_link_libraries(ExampleHostServices PUBLIC Qt6::Core Qt6::Widgets)
+endif()
+set(LUAU_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/luau" CACHE PATH "Luau source")
+set(LUABRIDGE3_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/LuaBridge3" CACHE PATH "LuaBridge3 source")
+add_subdirectory("${BINDINGS_SOURCE_DIR}" bindings)
+add_executable(binding_example main.cpp)
+target_link_libraries(binding_example PRIVATE ExampleBindings::Bindings)
+target_compile_definitions(binding_example PRIVATE EXAMPLE_SCRIPT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../script.luau")
+ExampleBindings_copy_definitions(binding_example)
+enable_testing()
+add_test(NAME generated_binding_example COMMAND binding_example)
+set_tests_properties(generated_binding_example PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

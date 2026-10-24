@@ -1,0 +1,20 @@
+{
+  "include": [
+    "python",
+    "tests/python",
+    "examples/run.py"
+  ],
+  "exclude": [
+    "build",
+    "3rdparty",
+    ".venv",
+    ".cache"
+  ],
+  "extraPaths": [
+    "python"
+  ],
+  "typeCheckingMode": "strict",
+  "pythonVersion": "3.12",
+  "venvPath": ".",
+  "venv": ".venv"
+}

@@ -1,0 +1,42 @@
+{
+  "extensions": [
+    {
+      "headers": [
+        "api.hpp"
+      ],
+      "namespace": "app",
+      "classes": {
+        "ScriptService": {
+          "constructible": true,
+          "access": [
+            "private"
+          ],
+          "members": [
+            "methods"
+          ],
+          "exclude": [
+            "secret"
+          ]
+        },
+        "ScriptDialog": {
+          "constructible": true,
+          "expose_base": "QWidget",
+          "access": [
+            "private"
+          ],
+          "members": [
+            "methods"
+          ]
+        }
+      }
+    }
+  ],
+  "exclude": {
+    "members": [
+      "ScriptService::hiddenSlot"
+    ],
+    "classes": [
+      "QDialog"
+    ]
+  }
+}

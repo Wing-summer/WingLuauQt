@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>UnsafeAsset</class>
+ <widget class="QWidget" name="UnsafeAsset">
+  <widget class="QLabel" name="leak">
+   <property name="pixmap"><pixmap>../../CMakeLists.txt</pixmap></property>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

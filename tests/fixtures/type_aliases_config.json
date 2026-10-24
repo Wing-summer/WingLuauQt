@@ -1,0 +1,58 @@
+{
+  "common": {
+    "types": {
+      "QString": {
+        "alias": "text"
+      },
+      "QByteArray": {
+        "alias": "bytes"
+      },
+      "QVariant": {
+        "alias": "box"
+      },
+      "QColor": {
+        "alias": "color",
+        "methods": [
+          "red"
+        ]
+      },
+      "QSpinBox": {
+        "alias": "spinner"
+      }
+    }
+  },
+  "qt": {
+    "namespace": "qt",
+    "widgets": {
+      "include": [
+        "QWidget"
+      ],
+      "extra_types": [],
+      "expose_qwidget_base": true,
+      "hide_unselected": true
+    },
+    "ui_tools": {
+      "enabled": false,
+      "allowed_roots": []
+    }
+  },
+  "exclude": {
+    "classes": [
+      "QMainWindow",
+      "QDialog",
+      "QDockWidget",
+      "QFile",
+      "QThread",
+      "QProcess",
+      "QLibrary",
+      "QPluginLoader",
+      "QOpenGLWidget",
+      "QApplication",
+      "QGuiApplication",
+      "QCoreApplication"
+    ],
+    "members": [
+      "QObject::moveToThread"
+    ]
+  }
+}

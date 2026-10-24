@@ -1,0 +1,76 @@
+{
+  "common": {
+    "types": {
+      "QString": {
+        "alias": "ustring"
+      },
+      "QByteArray": {
+        "alias": "bytearray"
+      }
+    }
+  },
+  "qt": {
+    "namespace": "qt",
+    "widgets": {
+      "include": [
+        "QWidget",
+        "QPushButton"
+      ],
+      "extra_types": [],
+      "expose_qwidget_base": true,
+      "hide_unselected": true
+    }
+  },
+  "exclude": {
+    "classes": [],
+    "members": []
+  },
+  "ir": {
+    "functions": [
+      {
+        "name": "writeLog",
+        "parameters": [
+          {
+            "name": "format",
+            "type": "string"
+          }
+        ],
+        "variadic": {
+          "type": "any"
+        },
+        "returns": []
+      },
+      {
+        "name": "joinStrings",
+        "parameters": [
+          {
+            "name": "prefix",
+            "type": "string"
+          }
+        ],
+        "variadic": {
+          "type": "string"
+        },
+        "returns": [
+          "string"
+        ]
+      },
+      {
+        "name": "fixedArgs",
+        "parameters": [
+          {
+            "name": "left",
+            "type": "string"
+          },
+          {
+            "name": "right",
+            "type": "string"
+          }
+        ],
+        "returns": [
+          "boolean"
+        ]
+      }
+    ]
+  }
+}

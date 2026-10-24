@@ -1,0 +1,21 @@
+/codegen/
+/build/
+/cmake-build-*/
+/3rdparty/luau/
+/3rdparty/LuaBridge3/
+__pycache__/
+*.py[cod]
+
+/.venv/
+/.cache/
+*.egg-info/
+
+# Local tools, editor state and disposable generated declarations.
+/.tools/
+/.ruff_cache/
+/.pytest_cache/
+/.vscode/
+/dist/
+/definitions/
+*.code-workspace
+CMakeUserPresets.json

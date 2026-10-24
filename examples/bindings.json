@@ -1,0 +1,109 @@
+{
+  "project": {
+    "name": "ExampleBindings",
+    "namespace": "example_bindings",
+    "helpers": [
+      "execution",
+      "require"
+    ]
+  },
+  "qt": {
+    "widgets": {
+      "include": [
+        "QWidget",
+        "QPushButton",
+        "QLabel"
+      ],
+      "hide_unselected": true
+    }
+  },
+  "extensions": [
+    {
+      "module": "",
+      "headers": [
+        "native/api.hpp"
+      ],
+      "classes": {
+        "PublicApi": {
+          "constructible": true
+        }
+      }
+    },
+    {
+      "module": "app",
+      "headers": [
+        "native/api.hpp"
+      ],
+      "classes": {
+        "InternalApi": {
+          "constructible": true,
+          "access": [
+            "private",
+            "protected"
+          ],
+          "non_public": "friend",
+          "members": [
+            "methods",
+            "fields"
+          ]
+        },
+        "ExampleDialog": {
+          "constructible": true,
+          "expose_base": "QWidget"
+        }
+      }
+    },
+    {
+      "module": "qt",
+      "headers": [
+        "native/api.hpp"
+      ],
+      "classes": {
+        "QtTools": {
+          "constructible": true
+        }
+      }
+    },
+    {
+      "module": "reader",
+      "headers": [
+        "native/api.hpp"
+      ],
+      "classes": {
+        "HostServices": {
+          "name": "Reader",
+          "binding": "functions",
+          "access": [
+            "public",
+            "private"
+          ],
+          "include": [
+            "read*"
+          ],
+          "context": [
+            "const QObject *"
+          ]
+        }
+      }
+    },
+    {
+      "module": "ctl",
+      "headers": [
+        "native/api.hpp"
+      ],
+      "classes": {
+        "HostServices": {
+          "name": "Control",
+          "binding": "functions",
+          "access": "private",
+          "include": [
+            "write*"
+          ],
+          "context": [
+            "const QObject *"
+          ]
+        }
+      }
+    }
+  ]
+}

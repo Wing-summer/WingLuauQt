@@ -1,0 +1,48 @@
+{
+  "common": {
+    "types": {
+      "QString": {
+        "alias": "textvalue"
+      },
+      "QByteArray": {
+        "alias": "rawdata"
+      }
+    }
+  },
+  "qt": {
+    "namespace": "qt",
+    "widgets": {
+      "include": [
+        "QWidget",
+        "QPushButton",
+        "QLabel"
+      ],
+      "extra_types": [],
+      "expose_qwidget_base": true,
+      "hide_unselected": true
+    },
+    "ui_tools": {
+      "enabled": false,
+      "allowed_roots": []
+    }
+  },
+  "exclude": {
+    "classes": [
+      "QMainWindow",
+      "QDialog",
+      "QDockWidget",
+      "QFile",
+      "QThread",
+      "QProcess",
+      "QLibrary",
+      "QPluginLoader",
+      "QOpenGLWidget",
+      "QApplication",
+      "QGuiApplication",
+      "QCoreApplication"
+    ],
+    "members": [
+      "QObject::moveToThread"
+    ]
+  }
+}

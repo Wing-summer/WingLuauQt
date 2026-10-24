@@ -1,0 +1,48 @@
+# Copyright (c) 2026, wingsummer
+# SPDX-License-Identifier: BSD-3-Clause
+# See LICENSE in the project root for license information.
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wingluauqt"
+version = "0.2.0"
+description = "Qt binding policy and Luau code generation using tsujikiri"
+readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{name = "wingsummer"}]
+requires-python = ">=3.12"
+dependencies = ["tsujikiri==0.32.0"]
+
+[project.optional-dependencies]
+dev = ["pyright==1.1.407", "ruff==0.17.1"]
+
+[project.scripts]
+wingluauqt-project = "qtluau_codegen.project:main"
+wingluauqt-discover = "qtluau_codegen.qt_pipeline:main"
+wingluauqt-definitions = "qtluau_codegen.generate_definitions:main"
+wingluauqt-scan = "qtluau_codegen.header_scan:main"
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.setuptools.package-data]
+qtluau_codegen = ["py.typed"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.setuptools.data-files]
+"share/wingluauqt" = ["LICENSE", "pyproject.toml"]
+"share/wingluauqt/config" = ["config/bindings.json"]
+"share/wingluauqt/include/qtluau" = ["include/qtluau/*.hpp"]
+"share/wingluauqt/support" = ["support/*.cpp"]
+"share/wingluauqt/support/qt" = ["support/qt/*.cpp"]
+"share/wingluauqt/cmake" = ["cmake/WingLuauQt.cmake", "cmake/WingLuauQtPython.cmake", "python/qtluau_codegen/bootstrap.py"]

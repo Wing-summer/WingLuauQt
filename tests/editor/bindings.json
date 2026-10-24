@@ -1,0 +1,39 @@
+{
+  "project": {
+    "name": "EditorBindings",
+    "namespace": "editor_bindings",
+    "helpers": [
+      "execution",
+      "require"
+    ]
+  },
+  "naming": {
+    "functions": "snake_case"
+  },
+  "qt": {
+    "target_version": "6.6.2",
+    "widgets": {
+      "include": [
+        "QWidget",
+        "QTextEdit",
+        "QMenu",
+        "QMenuBar",
+        "QVBoxLayout",
+        "QLabel"
+      ],
+      "hide_unselected": true
+    },
+    "discovery": {
+      "enabled": true,
+      "modules": [
+        "QtCore",
+        "QtGui",
+        "QtWidgets"
+      ],
+      "bases": [
+        "QTextEdit"
+      ],
+      "dependencies": "transitive"
+    }
+  }
+}

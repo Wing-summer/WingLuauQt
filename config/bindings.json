@@ -1,0 +1,87 @@
+{
+  "common": {
+    "types": {
+      "QString": {
+        "alias": "ustring",
+        "enabled": true,
+        "methods": [
+          "*"
+        ]
+      },
+      "QByteArray": {
+        "alias": "bytearray",
+        "enabled": true,
+        "methods": [
+          "*"
+        ]
+      },
+      "QVariant": {
+        "alias": "variant",
+        "enabled": true,
+        "methods": [
+          "*"
+        ]
+      }
+    }
+  },
+  "qt": {
+    "namespace": "qt",
+    "widgets": {
+      "include": [],
+      "extra_types": [],
+      "expose_qwidget_base": true,
+      "hide_unselected": true,
+      "dependency_api": "minimal"
+    },
+    "ui_tools": {
+      "enabled": true,
+      "allowed_roots": [],
+      "root_classes": [
+        "QMainWindow",
+        "QDialog"
+      ]
+    },
+    "discovery": {
+      "enabled": true,
+      "modules": [
+        "QtCore",
+        "QtGui",
+        "QtWidgets"
+      ],
+      "bases": [
+        "QWidget",
+        "QLayout"
+      ],
+      "blacklist": [
+        "QOpenGL*",
+        "QRhi*"
+      ],
+      "dependencies": "transitive"
+    }
+  },
+  "exclude": {
+    "classes": [
+      "QMainWindow",
+      "QDialog",
+      "QDockWidget",
+      "QFile",
+      "QThread",
+      "QProcess",
+      "QLibrary",
+      "QPluginLoader",
+      "QOpenGLWidget",
+      "QApplication",
+      "QGuiApplication",
+      "QCoreApplication"
+    ],
+    "members": [
+      "QObject::moveToThread"
+    ]
+  },
+  "lsp": {
+    "server": "luau-lsp",
+    "variadic_fixture": false,
+    "syntax": "luau"
+  },
+  "schema_version": 1
+}

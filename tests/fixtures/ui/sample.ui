@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>EmbeddedSample</class>
+ <widget class="QWidget" name="EmbeddedSample">
+  <property name="windowTitle">
+   <string>Loaded from .ui</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QLabel" name="sampleLabel">
+     <property name="text">
+      <string>Loaded child</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="sampleButton">
+     <property name="text">
+      <string>Go</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

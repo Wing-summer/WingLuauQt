@@ -616,6 +616,30 @@
         }
       },
       "additionalProperties": false
+    },
+    "framework_bindings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      },
+      "description": "Framework binding groups selected from the shipped config/framework-bindings.json contract."
+    },
+    "modules": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "require": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false

@@ -9,6 +9,8 @@ from collections.abc import Sequence
 
 def qt_string(value: str) -> str:
     """Render an explicit UTF-8 QString expression, escaping arbitrary input bytes."""
+    if not value:
+        return "QString()"
     encoded = value.encode("utf-8")
     escaped = "".join(
         chr(byte) if 32 <= byte < 127 and byte not in (34, 92) else f"\\{byte:03o}"

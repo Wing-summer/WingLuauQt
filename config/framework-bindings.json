@@ -1,0 +1,75 @@
+{
+  "groups": {
+    "values": {
+      "aliases": {
+        "url": "QUrl",
+        "char": "QChar",
+        "regex.exp": "QRegularExpression",
+        "regex.match": "QRegularExpressionMatch"
+      }
+    },
+    "json": {
+      "modules": {
+        "json": {
+          "": "QJsonDocument"
+        }
+      }
+    },
+    "xml": {
+      "modules": {
+        "xml": {
+          "reader": "QXmlStreamReader",
+          "writer": "QXmlStreamWriter"
+        }
+      }
+    },
+    "cbor": {
+      "modules": {
+        "cbor": {
+          "": "QCborValue"
+        }
+      }
+    },
+    "env": {
+      "modules": {
+        "env": {
+          "": "QProcessEnvironment"
+        }
+      }
+    },
+    "crypto": {
+      "modules": {
+        "crypto": {
+          "": "QCryptographicHash"
+        }
+      }
+    },
+    "clipboard": {
+      "classes": {
+        "QClipboard": {
+          "provider": "QGuiApplication::clipboard"
+        }
+      }
+    },
+    "dialogs": {
+      "classes": {
+        "QMessageBox": {
+          "static_only": true,
+          "implicit_parent": true
+        },
+        "QInputDialog": {
+          "static_only": true,
+          "implicit_parent": true
+        },
+        "QFileDialog": {
+          "static_only": true,
+          "implicit_parent": true
+        },
+        "QColorDialog": {
+          "static_only": true,
+          "implicit_parent": true
+        }
+      }
+    }
+  }
+}

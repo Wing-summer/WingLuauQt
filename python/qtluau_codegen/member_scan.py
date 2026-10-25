@@ -22,18 +22,21 @@ from .models import NativeMethod
 
 class Enum(Protocol):
     """Describe the named libclang enum values used at the typed boundary."""
+
     #: Declaration or source file name.
     name: str
 
 
 class File(Protocol):
     """Expose the native source file name without a vendor-specific object."""
+
     #: Declaration or source file name.
     name: str
 
 
 class Location(Protocol):
     """Describe a source file and byte offset for member extraction."""
+
     #: Source file associated with a cursor.
     file: File | None
     #: Byte offset within the source file.
@@ -42,12 +45,18 @@ class Location(Protocol):
 
 class Type(Protocol):
     """Describe native type spellings and relevant qualifiers."""
+
     #: Compiler-reported declaration or type spelling.
     spelling: str
+
+    def get_canonical(self) -> Type:
+        """Return the fully resolved native type behind aliases."""
+        ...
 
     def is_const_qualified(self) -> bool:
         """Report whether the native type is const-qualified."""
         ...
+
     def is_function_variadic(self) -> bool:
         """Report whether the native function type accepts variadic arguments."""
         ...
@@ -55,34 +64,48 @@ class Type(Protocol):
 
 class Cursor(Protocol):
     """Expose the subset of libclang cursor operations needed by the scanner."""
+
     #: Typed compiler or conversion category.
     kind: Enum
     #: Compiler-reported declaration or type spelling.
     spelling: str
+    #: Enclosing semantic declaration.
+    semantic_parent: Cursor | None
     #: Source location of the declaration.
     location: Location
     #: Native member visibility.
     access_specifier: Enum
     #: Native function result type.
     result_type: Type
+    #: Resolved type declared by a typedef or type alias.
+    underlying_typedef_type: Type
     #: Native declaration type.
     type: Type
 
     def get_children(self) -> Iterable[Cursor]:
         """Iterate direct child declarations of this native cursor."""
         ...
+
     def get_arguments(self) -> Iterable[Cursor]:
         """Iterate native function parameter declarations."""
         ...
+
     def is_definition(self) -> bool:
         """Report whether this cursor provides the declaration definition."""
         ...
+
     def is_static_method(self) -> bool:
         """Report whether the native method is static."""
         ...
+
     def is_const_method(self) -> bool:
         """Report whether the native method is const-qualified."""
         ...
+
+    def is_copy_constructor(self) -> bool:
+        """Report whether this constructor copies its own native type."""
+        ...
+
     def is_deleted_method(self) -> bool:
         """Report whether the native method is explicitly deleted."""
         ...
@@ -90,6 +113,7 @@ class Cursor(Protocol):
 
 class Diagnostic(Protocol):
     """Describe a typed compiler diagnostic severity and message."""
+
     #: Compiler diagnostic severity level.
     severity: int
     #: Compiler-reported declaration or type spelling.
@@ -98,6 +122,7 @@ class Diagnostic(Protocol):
 
 class TranslationUnit(Protocol):
     """Expose parsed native declarations and their diagnostics."""
+
     #: Translation-unit root cursor.
     cursor: Cursor
     #: Compiler diagnostics produced by the parse.
@@ -106,6 +131,7 @@ class TranslationUnit(Protocol):
 
 class Index(Protocol):
     """Describe the libclang translation-unit parsing interface."""
+
     def parse(self, path: str, args: list[str], options: int = 0) -> TranslationUnit:
         """Parse a source path using the supplied compiler arguments and options."""
         ...
@@ -113,6 +139,7 @@ class Index(Protocol):
 
 class IndexFactory(Protocol):
     """Construct a typed compiler index."""
+
     def create(self) -> Index:
         """Create a compiler index for a fresh translation-unit parse."""
         ...
@@ -120,12 +147,14 @@ class IndexFactory(Protocol):
 
 class Clang(Protocol):
     """Expose the typed libclang factory interface."""
+
     #: Typed index factory supplied by libclang.
     Index: IndexFactory
 
 
 class Field(TypedDict):
     """Describe a declared native data field and its access."""
+
     #: Declaration or source file name.
     name: str
     #: Native declaration type.
@@ -138,6 +167,7 @@ class Field(TypedDict):
 
 class Members(TypedDict):
     """Group native methods, fields and access metadata for one class."""
+
     #: Selected method signatures or method names.
     methods: list[NativeMethod]
     #: Declared data fields and their access metadata.

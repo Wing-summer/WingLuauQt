@@ -10,20 +10,24 @@ structs. Group namespaces and require module ownership are independent.
 
 from __future__ import annotations
 
+import copy
 import fnmatch
 import hashlib
 import json
 import pathlib
 
+from .catalog import NATIVE_CLASSES
 from .discovery import discover_sdk
 from .extensions import identifier, paths, write
 from .models import JsonObject, object_field, object_list_field, string_list_field
+from .module_policy import requires_module
 from .type_mapping import mapped_type
 
 
 def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) -> list[JsonObject]:
     """Scan application native APIs and emit typed callback contracts and definitions."""
     from tsujikiri.configurations import SourceConfig
+    from tsujikiri.ir import IRFunction, IRMethod
     from tsujikiri.parser import parse_translation_unit_ir
 
     entries = object_list_field(config, "native_apis")
@@ -90,6 +94,19 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
                     "qtToLua(L, {expr})" if result else "{expr}.value",
                 )
             mapped = mapped_type(spelling, result)
+            if (
+                mapped is None
+                and bare in NATIVE_CLASSES
+                and NATIVE_CLASSES[bare].get("copyable", True)
+            ):
+                required = set(string_list_field(config, "_sdk_required_types"))
+                required.add(bare)
+                config["_sdk_required_types"] = sorted(required)
+                return (
+                    "luabridge::LuaRef" if result else f"QtArgument<{bare}>",
+                    "_qt_" + bare,
+                    "qtToLua(L, {expr})" if result else "{expr}.value",
+                )
             if mapped is None:
                 raise ValueError(f"Unsupported native API type: {spelling}")
             lua_type = mapped[1]
@@ -113,6 +130,7 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
             "#include <QMetaEnum>",
             "#include <QThread>",
             "#include <QCoreApplication>",
+            "#include <tuple>",
             *[f'#include "{p}"' for p in public_headers],
         ]
         declarations.extend(f'#include "{p}"' for p in public_headers)
@@ -212,13 +230,29 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
                 }
             )
         selected = string_list_field(entry, "classes")
-        available = [
+        available: list[IRMethod | IRFunction] = [
             m
             for cls in ir.classes
             if cls.qualified_name in selected
             for m in cls.methods
             if m.access == "public" and not m.is_static and not m.name.startswith("operator")
         ]
+        function_rules = object_field(entry, "functions")
+        for function in ir.functions:
+            if function.qualified_name not in function_rules:
+                continue
+            rule = object_field(function_rules, function.qualified_name)
+            hidden = rule.get("context_parameters", 0)
+            if (
+                not isinstance(hidden, int)
+                or isinstance(hidden, bool)
+                or hidden < 0
+                or hidden > len(function.parameters)
+            ):
+                raise ValueError("Invalid native function context parameter count")
+            exposed = copy.copy(function)
+            exposed.parameters = function.parameters[hidden:]
+            available.append(exposed)
         claimed: set[tuple[str, tuple[str, ...]]] = set()
         for group in object_list_field(entry, "groups"):
             namespace = identifier(group["namespace"])
@@ -242,7 +276,17 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
                 if key in claimed:
                     continue
                 claimed.add(key)
-                mapped = [conversion(p.type_spelling) for p in method.parameters]
+                outputs: dict[int, tuple[str, tuple[str, str, str], bool]] = {}
+                mapped: list[tuple[str, str, str]] = []
+                for position, parameter in enumerate(method.parameters):
+                    spelling = parameter.type_spelling
+                    if not spelling.startswith("const ") and spelling.rstrip().endswith(("&", "*")):
+                        bare = spelling.rstrip().rstrip("*& ").strip()
+                        converted = conversion(bare, True)
+                        outputs[position] = bare, converted, spelling.rstrip().endswith("*")
+                        mapped.append(("", converted[1], ""))
+                    else:
+                        mapped.append(conversion(spelling))
                 result = conversion(method.return_type, True)
                 default_count = sum(p.default_value is not None for p in method.parameters)
                 public_name = identifier(rename.get(method.name, method.name))
@@ -257,16 +301,45 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
                     f"std::function<{qualified(method.return_type)}({', '.join(qualified(p.type_spelling) for p in method.parameters)})> {callback_name};"
                 )
                 for count in range(len(mapped) - default_count, len(mapped) + 1):
-                    params = [f"{p[0]} arg{i}" for i, p in enumerate(mapped[:count])]
+                    params = [
+                        f"{p[0]} arg{i}" for i, p in enumerate(mapped[:count]) if i not in outputs
+                    ]
                     params.append("lua_State *L")
-                    values = [p[2].format(expr=f"arg{i}") for i, p in enumerate(mapped[:count])]
+                    values = [
+                        (("&" if outputs[i][2] else "") + f"output{i}")
+                        if i in outputs
+                        else p[2].format(expr=f"arg{i}")
+                        for i, p in enumerate(mapped[:count])
+                    ]
                     values.extend(str(p.default_value) for p in method.parameters[count:])
                     values = [qualified_default(value) for value in values]
                     call = f"function({', '.join(values)})"
-                    body = (
-                        f"{call};"
-                        if method.return_type == "void"
-                        else "return " + result[2].format(expr=call) + ";"
+                    statements = [
+                        f"{qualified(kind)} output{i}{{}};"
+                        for i, (kind, _, _) in outputs.items()
+                        if i < count
+                    ]
+                    results: list[str] = []
+                    result_types: list[str] = []
+                    if method.return_type == "void":
+                        statements.append(call + ";")
+                    else:
+                        statements.append("auto result = " + call + ";")
+                        results.append(result[2].format(expr="result"))
+                        result_types.append(result[1])
+                    for i, (_, converted, _) in outputs.items():
+                        if i < count:
+                            results.append(converted[2].format(expr=f"output{i}"))
+                            result_types.append(converted[1])
+                    if len(results) == 1:
+                        statements.append("return " + results[0] + ";")
+                    elif results:
+                        statements.append("return std::make_tuple(" + ", ".join(results) + ");")
+                    body = " ".join(statements)
+                    lua_result = (
+                        result_types[0]
+                        if len(result_types) == 1
+                        else "(" + ", ".join(result_types) + ")"
                     )
                     functions.setdefault(public_name, []).append(
                         f'[function = callbacks.{callback_name}]({", ".join(params)}) {{ if (!function) {{ throw std::runtime_error("Host callback is not bound: {namespace}.{public_name}"); }} {body} }}'
@@ -274,8 +347,10 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
                     methods.append(
                         {
                             "name": public_name,
-                            "parameters": [p[1] for p in mapped[:count]],
-                            "result": result[1],
+                            "parameters": [
+                                p[1] for i, p in enumerate(mapped[:count]) if i not in outputs
+                            ],
+                            "result": lua_result,
                             "callback": callback_name,
                             "native_name": method.name,
                             "native_arguments": [
@@ -310,10 +385,10 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
                         f'lua_getglobal(L, "{namespace}");',
                         f'rememberModule(L, "{module}", -1);',
                         "lua_pop(L, 1);",
-                        "lua_pushnil(L);",
-                        f'lua_setglobal(L, "{namespace}");',
                     ]
                 )
+            if module and requires_module(config, module):
+                code.extend(["lua_pushnil(L);", f'lua_setglobal(L, "{namespace}");'])
             code.extend(["}", "}"])
             filename = f"native_{index}_{namespace}.cpp"
             write(out / filename, "\n".join(code) + "\n")

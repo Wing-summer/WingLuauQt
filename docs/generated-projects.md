@@ -70,12 +70,26 @@ Call `<Name>_copy_definitions(Executable)` after creating the executable. CMake 
 
 ## Application modules and callbacks / 应用模块与回调
 
-`extra_bindings` accepts arbitrary `module`, `register`, `files` and `definitions`. The registration function belongs to `qtluau::` and stores its value with `rememberModule`. Utility implementations belong to the application; the framework has no fixed module list.
+`extra_bindings` accepts arbitrary `module`, `register`, `files` and `definitions`. The registration function belongs to `qtluau::` and stores its value with `rememberModule`. Use `framework_bindings` to select groups from the shipped `config/framework-bindings.json` contract. Python generates registration and definitions together. SDK value methods and overloads come from Qt discovery; raw VM callbacks use the contract because their C++ int(lua_State*) signature does not describe the returned Lua stack. Native C++ retains operations and lifecycle glue only.
 
-应用通过上述字段提供 C++ 注册函数、源码及配套 Luau 定义。回调使用 `callback_sets`，函数的 `native` 字段可指定原生符号，例如 `&ScriptHost::print`；生成器同时生成定义和 `callback_initializers.inc`。该片段由宿主在允许访问原生函数的作用域中包含，避免维护第二份注册列表。
+框架通过 framework_bindings 选择分组，Python 从 Qt SDK 扫描结果及单一 VM 契约生成注册代码和定义；support/bindings 仅保留原生操作及生命周期胶水。源码与安装包使用相同生成路径。应用也可通过上述字段提供自己的实现。回调使用 `callback_sets`，函数的 `native` 字段可指定原生符号，例如 `&ScriptHost::print`；生成器同时生成定义和 `callback_initializers.inc`。该片段由宿主在允许访问原生函数的作用域中包含，避免维护第二份注册列表。
 
 ## UI creation / UI 创建
 
 `setUiWidgetResolver` receives the class name, object name, parent and root status before default creation. Return `Default`, `Reject` or `Use` with a QWidget. The host may provide QMainWindow, QDialog, custom widgets or unknown UI roots while preserving their native type and flags.
 
 宿主回调控制 UI 根类或任意指定类的创建；父对象所有权与 GUI 线程规则继续生效。清空回调使用 `{}`，宿主接管的根对象不会被隐式转换成其他控件。
+
+The host supplies concrete `HostApiCallbacks` through `bindHostApi`; framework sources have no dependency on WingHex headers or plugin identities. Generated sources and definition outputs remain in the consuming build directory.
+
+宿主通过 bindHostApi 提供具体 HostApiCallbacks；框架源码不依赖 WingHex 头文件或插件身份。生成的源码及定义产物仍位于使用方构建目录。
+
+### Module exposure / 模块暴露
+
+`modules.<name>.require` defaults to `false`: named modules are globals. When `true`, the module keeps its name, is hidden globally, and is listed by `moduleFiles()` for the host's builtin require registration. For example, `"modules": {"qt": {"require": true}}` exposes Qt through `require("@b/qt")` in WingHexExplorer2. Native callback rebinding preserves the same module value and exposure.
+
+`modules.<name>.require` 默认 `false`，命名模块直接作为全局公开；设为 `true` 时名称不变，隐藏全局，并通过 `moduleFiles()` 交给宿主注册 builtin require。原生回调重新绑定保持同一个模块值及其暴露方式。
+
+Dialog class policy can enable `implicit_parent` together with `static_only`. The SDK scan identifies `QWidget *parent` parameters by their declared name and type and generates an additional overload supplying `nullptr`, while preserving explicit-parent overloads. Native defaults remain C++ defaults. Discovered QFlags typedefs use integer conversion, so individual enum values and combined flags share the same overload.
+
+对话框类策略可同时启用 `implicit_parent` 与 `static_only`。SDK 扫描根据声明中的名称和类型识别 `QWidget *parent` 参数，额外生成传入 `nullptr` 的重载，并保留显式父对象重载。原生默认参数由 C++ 提供。扫描获得的 QFlags 类型别名统一使用整数转换，因此单个枚举值和组合标志均可调用相同重载。

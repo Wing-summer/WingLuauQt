@@ -8,12 +8,15 @@ import argparse
 import copy
 import json
 import pathlib
+import re
 import subprocess
 import tempfile
 
 from qtluau_codegen.callback_bindings import emit_callbacks
+from qtluau_codegen.catalog import NATIVE_CLASSES
 from qtluau_codegen.cpp_literals import qt_string
 from qtluau_codegen.extensions import emit_extensions
+from qtluau_codegen.framework_bindings import emit_framework_bindings
 from qtluau_codegen.models import JsonObject
 from qtluau_codegen.module_definitions import split_declarations
 from qtluau_codegen.project import export_project
@@ -26,7 +29,61 @@ def main() -> None:
     parser.add_argument("--definition-checker", type=pathlib.Path, required=True)
     args = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parents[2]
+    with tempfile.TemporaryDirectory() as binding_output:
+        selected: JsonObject = {
+            "framework_bindings": ["clipboard"],
+            "exclude": {"classes": ["QDebug*", "QNoDebug"]},
+        }
+        destination = pathlib.Path(binding_output)
+        (destination / "custom").mkdir()
+        stale_debug = destination / "custom/sdk_QDebug.cpp"
+        stale_debug.write_text("// stale generated source\n")
+        metadata, definitions = emit_framework_bindings(selected, destination)
+        assert not stale_debug.exists()
+        assert "QDebug:" not in definitions["qt"]
+        assert all(item["module"] != "clipboard" for item in metadata)
+        source = (destination / "custom/sdk_QClipboard.cpp").read_text()
+        assert 'addStaticFunction("image"' in source
+        assert 'addStaticFunction("setImage"' in source
+        assert "QGuiApplication::clipboard()" in source
+        assert "addConstructor(" not in source
+        assert "QClipboard:" in definitions["qt"]
+        assert "image:" in definitions["qt"]
+        assert "setImage:" in definitions["qt"]
+        assert (destination / "custom/sdk_QImage.cpp").is_file()
+        assert not (destination / "custom/clipboard.cpp").exists()
     config: JsonObject = json.loads((root / "examples/bindings.json").read_text())
+    with tempfile.TemporaryDirectory() as framework_output:
+        framework_config = copy.deepcopy(config)
+        framework_config["framework_bindings"] = [
+            "values",
+            "json",
+            "xml",
+            "cbor",
+            "env",
+            "crypto",
+            "clipboard",
+            "dialogs",
+        ]
+        framework_project = pathlib.Path(framework_output) / "project"
+        export_project(framework_config, framework_project, root / "examples")
+        assert not NATIVE_CLASSES["QCborStreamReader"].get("copyable", True)
+        cbor_source = (framework_project / "generated/custom/sdk_QCborValue.cpp").read_text()
+        assert re.search(r"QCborStreamReader\s*&\s*arg0", cbor_source)
+        assert "QCborStreamReader output0{}" not in cbor_source
+        assert "QCborParserError output1{}" in cbor_source
+        json_source = (framework_project / "generated/custom/sdk_QJsonDocument.cpp").read_text()
+        assert "QJsonParseError output1{}" in json_source
+        assert not (framework_project / "support/bindings").exists()
+        assert not (framework_project / "generated/custom/host_values.cpp").exists()
+        assert (framework_project / "generated/custom/sdk_QClipboard.cpp").is_file()
+        subprocess.run(
+            [
+                str(args.definition_checker),
+                str(framework_project / "definitions/module_0.d.luau"),
+            ],
+            check=True,
+        )
     try:
         export_project(config, root / "examples", root / "examples")
     except ValueError as error:
@@ -41,7 +98,9 @@ def main() -> None:
         assert "extra_bindings" in str(error)
     else:
         raise AssertionError("Legacy fixed-package configuration was accepted")
-    assert qt_string('中文"\\') == 'QString::fromUtf8("\\344\\270\\255\\346\\226\\207\\042\\134", 8)'
+    assert (
+        qt_string('中文"\\') == 'QString::fromUtf8("\\344\\270\\255\\346\\226\\207\\042\\134", 8)'
+    )
     invalid_boolean = copy.deepcopy(config)
     invalid_boolean.setdefault("qt", {}).setdefault("ui_tools", {})["enabled"] = "yes"
     try:
@@ -54,7 +113,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         out = pathlib.Path(temporary) / "project"
         manifest = export_project(config, out, root / "examples")
-        stable_files = [out / "CMakeLists.txt", out / "include/generated_bindings.hpp", out / "modules/aggregate.cpp"]
+        assert not (out / "support/bindings").exists()
+        stable_files = [
+            out / "CMakeLists.txt",
+            out / "include/generated_bindings.hpp",
+            out / "modules/aggregate.cpp",
+        ]
         timestamps = [path.stat().st_mtime_ns for path in stable_files]
         (out / "binding_policy.json").write_text("obsolete resource")
         (out / "ExampleBindings_policy.qrc").write_text("obsolete resource")
@@ -70,8 +134,12 @@ def main() -> None:
         export_project(config, core_out, root / "examples")
         core_manifest = export_project(core, core_out, root / "examples")
         assert core_manifest["helpers"] == []
-        for optional_file in ("support/execute_luau.cpp", "support/module_registry.cpp",
-                              "include/qtluau/execution.hpp", "include/qtluau/module_require.hpp"):
+        for optional_file in (
+            "support/execute_luau.cpp",
+            "support/module_registry.cpp",
+            "include/qtluau/execution.hpp",
+            "include/qtluau/module_require.hpp",
+        ):
             assert not (core_out / optional_file).exists()
         assert (core_out / "include/qtluau/module_values.hpp").is_file()
         core_header = (core_out / "include/generated_bindings.hpp").read_text()
@@ -103,7 +171,10 @@ def main() -> None:
             in (out / "include/generated_bindings.hpp").read_text()
         )
         assert (out / "native/api.hpp").is_file()
-        assert "${_wingluauqt_input_root}/native/api.hpp" in (out / "generation_inputs.cmake").read_text()
+        assert (
+            "${_wingluauqt_input_root}/native/api.hpp"
+            in (out / "generation_inputs.cmake").read_text()
+        )
         assert not list((out / "generated").glob("qt_ext_moc_*.cpp"))
         assert "AUTOMOC ON" in (out / "CMakeLists.txt").read_text()
         for source in (out / "generated").glob("*.cpp"):
@@ -116,21 +187,44 @@ def main() -> None:
         declarations = [out / "definitions" / f"module_{i}.d.luau" for i in range(5)]
         assert set((out / "definitions").glob("*.d.luau")) == set(declarations)
         assert sum(path.stat().st_size for path in declarations[1:]) < len(public_definition) // 10
-        subprocess.run([
-            str(args.definition_checker), "--merge", *map(str, declarations),
-            "--probe=" + str(root / "examples/script.luau"),
-        ], check=True)
+        subprocess.run(
+            [
+                str(args.definition_checker),
+                "--merge",
+                *map(str, declarations),
+                "--probe=" + str(root / "examples/script.luau"),
+            ],
+            check=True,
+        )
         assert split_declarations("") == ([], [])
-        aliases, values = split_declarations("type Tree = {children: {Tree}}\ndeclare tools: {root: Tree}\n")
+        aliases, values = split_declarations(
+            "type Tree = {children: {Tree}}\ndeclare tools: {root: Tree}\n"
+        )
         assert aliases == ["type Tree = {children: {Tree}}"]
         assert values == ["declare tools: {root: Tree}"]
-        callback_definitions = emit_callbacks({"callback_sets": [{
-            "name": "ModuleCallbacks", "module": "tools", "functions": [{
-                "name": "echo", "native": "&ExampleCallbacks::echo", "parameters": [{"name": "value", "type": "string"}],
-                "returns": ["string"]
-            }]
-        }]}, out / "generated")
-        assert "qtluau::registerModuleCallbacks(L, {&ExampleCallbacks::echo});" in (out / "generated/callback_initializers.inc").read_text()
+        callback_definitions = emit_callbacks(
+            {
+                "callback_sets": [
+                    {
+                        "name": "ModuleCallbacks",
+                        "module": "tools",
+                        "functions": [
+                            {
+                                "name": "echo",
+                                "native": "&ExampleCallbacks::echo",
+                                "parameters": [{"name": "value", "type": "string"}],
+                                "returns": ["string"],
+                            }
+                        ],
+                    }
+                ]
+            },
+            out / "generated",
+        )
+        assert (
+            "qtluau::registerModuleCallbacks(L, {&ExampleCallbacks::echo});"
+            in (out / "generated/callback_initializers.inc").read_text()
+        )
         callback_path = out / "callback-test.d.luau"
         callback_path.write_text(callback_definitions["tools"])
         subprocess.run([str(args.definition_checker), str(callback_path)], check=True)
@@ -145,8 +239,14 @@ def main() -> None:
         assert not list((ref_out / "generated").glob("qt_ext_moc_*.cpp"))
         assert "Host::Services" in (ref_out / "CMakeLists.txt").read_text()
         reference_cmake = (ref_out / "CMakeLists.txt").read_text()
-        assert 'set(ExampleBindings_HOST_SOURCE_DIR "${CMAKE_SOURCE_DIR}" CACHE PATH' in reference_cmake
-        assert str((root / "examples").resolve()) not in reference_cmake.split("find_package(Qt6", 1)[0]
+        assert (
+            'set(ExampleBindings_HOST_SOURCE_DIR "${CMAKE_SOURCE_DIR}" CACHE PATH'
+            in reference_cmake
+        )
+        assert (
+            str((root / "examples").resolve())
+            not in reference_cmake.split("find_package(Qt6", 1)[0]
+        )
         assert not (out / "adapters").exists()
         assert not (out / "generated/packages").exists()
         assert not list((out / "generated").glob("*.json"))
@@ -159,15 +259,27 @@ def main() -> None:
         assert not (out / "codegen/development_config.cpp").exists()
         assert not (out / "include/qtluau/config.hpp").exists()
         assert not (out / "include/qtluau/constructor_registration.hpp").exists()
-        assert all("RegistrationConfig" not in header.read_text() for header in (out / "include").rglob("*.hpp"))
+        assert all(
+            "RegistrationConfig" not in header.read_text()
+            for header in (out / "include").rglob("*.hpp")
+        )
         assert not (out / "generated/default_widgets.inc").exists()
         assert "registerCommonBindings(L);" in (out / "modules/support.cpp").read_text()
         for source in [*out.glob("generated/static_*.cpp"), out / "modules/support.cpp"]:
-            assert not any(token in source.read_text() for token in (
-                "BindingConfig", "RegistrationConfig", "isMemberExcluded",
-                "isConstructorExcluded", "isClassExcluded", "policy()",
-            ))
-        reader = public_definition.split("export type __WingLuauQtValue_reader = ", 1)[1].split("\n\n", 1)[0]
+            assert not any(
+                token in source.read_text()
+                for token in (
+                    "BindingConfig",
+                    "RegistrationConfig",
+                    "isMemberExcluded",
+                    "isConstructorExcluded",
+                    "isClassExcluded",
+                    "policy()",
+                )
+            )
+        reader = public_definition.split("export type __WingLuauQtValue_reader = ", 1)[1].split(
+            "\n\n", 1
+        )[0]
         assert "read_int:" in reader and "QObject" not in reader and "write_int:" not in reader
         wrong_context = copy.deepcopy(config)
         wrong_context["extensions"][-1]["classes"]["HostServices"]["context"] = []

@@ -41,6 +41,8 @@ class NativeMethod(TypedDict):
     """Retain native signature and qualifier information for generation."""
     #: Minimum arity after trailing default arguments.
     minimum_args: NotRequired[int]
+    #: Native default expressions, in parameter order.
+    defaults: NotRequired[list[str | None]]
     #: Native declaring class.
     owner: str
     #: Declaration or source file name.
@@ -49,6 +51,8 @@ class NativeMethod(TypedDict):
     result: str
     #: Native parameter type spellings.
     args: list[str]
+    #: Native parameter names, in declaration order.
+    parameter_names: NotRequired[list[str]]
     #: Whether the native method is const-qualified.
     const: bool
     #: Whether the native member is static.
@@ -63,6 +67,10 @@ class NativeClass(TypedDict):
     """Describe a discovered Qt class and its binding dependencies."""
     #: Public constructor argument prefixes, including default-argument arities.
     constructors: NotRequired[list[list[str]]]
+    #: Whether the native class permits copying.
+    copyable: NotRequired[bool]
+    #: Public data fields discovered from the native declaration.
+    fields: NotRequired[list[JsonObject]]
     #: Direct native base class names.
     bases: list[str]
     #: Whether unresolved pure virtual members remain.

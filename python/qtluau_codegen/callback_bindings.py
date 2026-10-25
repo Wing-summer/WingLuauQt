@@ -12,13 +12,21 @@ import re
 from .extensions import identifier, write
 from .generate_definitions import emit_ir_function
 from .models import JsonObject, object_list_field
+from .module_policy import requires_module
 
 
 def emit_callbacks(config: JsonObject, output: pathlib.Path) -> dict[str, str]:
     """Emit validated host callback contracts and matching module definitions."""
     header = ["#pragma once", '#include "qtluau/bindings.hpp"', "namespace qtluau {"]
-    source = ['#include "qtluau/packages.hpp"', '#include "callback_bindings.hpp"', "#include <stdexcept>", "namespace qtluau {"]
-    initializers = ["// Generated native callback initializers; include inside the host registration scope."]
+    source = [
+        '#include "qtluau/packages.hpp"',
+        '#include "callback_bindings.hpp"',
+        "#include <stdexcept>",
+        "namespace qtluau {",
+    ]
+    initializers = [
+        "// Generated native callback initializers; include inside the host registration scope."
+    ]
     definitions: dict[str, str] = {}
     for entry in object_list_field(config, "callback_sets"):
         name = identifier(entry["name"])
@@ -38,7 +46,9 @@ def emit_callbacks(config: JsonObject, output: pathlib.Path) -> dict[str, str]:
                 raise ValueError("Callback native symbols must be strings")
             native.append(symbol)
         if any(native):
-            if not all(re.fullmatch(r"&?[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*", value) for value in native):
+            if not all(
+                re.fullmatch(r"&?[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*", value) for value in native
+            ):
                 raise ValueError("Every callback in an initialized set needs a valid native symbol")
             initializers.append(f"qtluau::register{name}(L, {{" + ", ".join(native) + "});")
 
@@ -60,13 +70,15 @@ def emit_callbacks(config: JsonObject, output: pathlib.Path) -> dict[str, str]:
         )
         source.extend(f'scope.addFunction("{fn}", callbacks.{fn});' for fn in names)
         if module:
-            source.extend([
-                f'lua_getglobal(L, "{module}");',
-                f'rememberModule(L, "{module}", -1);',
-                "lua_pop(L, 1);",
-                "lua_pushnil(L);",
-                f'lua_setglobal(L, "{module}");',
-            ])
+            source.extend(
+                [
+                    f'lua_getglobal(L, "{module}");',
+                    f'rememberModule(L, "{module}", -1);',
+                    "lua_pop(L, 1);",
+                ]
+            )
+        if module and requires_module(config, module):
+            source.extend(["lua_pushnil(L);", f'lua_setglobal(L, "{module}");'])
         source.append("}")
         text = "\n".join(emit_ir_function(f) for f in functions) + "\n"
         if namespace:

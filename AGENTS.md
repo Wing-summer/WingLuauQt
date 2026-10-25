@@ -2,8 +2,8 @@
 
 ## Scope and ownership / 范围与归属
 
-- Keep this framework generic. Application configuration, callback forwarding and native adapters belong in the application's `codegen/` directory. Preserve unrelated changes and respect dependency repository boundaries.
-  框架保持通用；应用策略、回调转发及原生适配由应用的 `codegen/` 维护。保留无关改动，尊重依赖仓库边界。
+- Keep this framework generic. Application policy and concrete callback forwarding stay in the host. Select root classes and instance providers in config/framework-bindings.json. Discover members and signature dependencies through the SDK scanner; never maintain duplicate API lists. Python generates SDK bindings, module registration and Luau definitions; do not maintain copied registration sources or .d.luau files. Preserve unrelated changes and respect dependency repository boundaries.
+  框架保持通用；应用策略及具体回调转发由宿主维护；在 config/framework-bindings.json 选择根类型和实例提供者，成员及签名依赖统一通过 SDK 扫描获得，不维护重复 API 清单；Python 生成 SDK 绑定、模块注册及 Luau 定义，不维护复制式注册源码或 .d.luau 文件。保留无关改动，尊重依赖仓库边界。
 - Treat generated projects as disposable output. Fix generator inputs or templates and regenerate; never patch generated files. Do not add an extra project directory beneath the requested output root.
   生成工程视为可重建产物；修改输入或模板后重新生成，不手工修补生成文件，不在目标输出目录下增加项目嵌套。
 - Reuse host require and language-server APIs. The empty module key means public globals. Named modules must keep their runtime ownership and definition-file maps aligned.

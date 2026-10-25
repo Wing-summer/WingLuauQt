@@ -7,13 +7,20 @@
 from __future__ import annotations
 
 import functools
+import importlib
 import pathlib
 import re
 import shlex
 import shutil
 import subprocess
+from typing import cast
 
 from .models import NativeClass, NativeMethod
+
+# Enum declarations discovered alongside native classes, keyed by qualified type.
+SDK_ENUMS: dict[str, dict[str, int]] = {}
+#: Fully resolved QFlags aliases, discovered from compiler typedef declarations.
+SDK_FLAGS: dict[str, str] = {}
 
 
 def command(args: list[str]) -> str:
@@ -66,6 +73,8 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
     from tsujikiri.ir import IRClass, IRMethod
     from tsujikiri.parser import parse_translation_unit_ir
 
+    from .member_scan import Clang
+
     flags = discover_sdk(list(modules))
     if shutil.which("clang++"):
         flags.append("-resource-dir=" + command(["clang++", "-print-resource-dir"]))
@@ -81,6 +90,49 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
         )
         if errors:
             raise ValueError("tsujikiri could not parse the Qt SDK:\n" + "\n".join(errors))
+        # Semantic deletion survives Qt macros whose token spelling is not '= delete'.
+        clang = cast(Clang, importlib.import_module("clang.cindex"))
+        unit = clang.Index.create().parse(str(source), args=["-std=c++17", *flags])
+        deleted: dict[str, set[tuple[str, ...]]] = {}
+        noncopyable: set[str] = set()
+        constructor_cursors = (
+            child
+            for record in unit.cursor.get_children()
+            if (
+                record.kind.name in {"CLASS_DECL", "STRUCT_DECL"}
+                and re.fullmatch(r"Q[A-Za-z0-9_]+", record.spelling)
+            )
+            or (record.kind.name == "NAMESPACE" and record.spelling == "Qt")
+            for child in record.get_children()
+        )
+        for cursor in constructor_cursors:
+            if cursor.kind.name in {"TYPEDEF_DECL", "TYPE_ALIAS_DECL"}:
+                canonical = cursor.underlying_typedef_type.get_canonical().spelling
+                parent = cursor.semantic_parent
+                if canonical.startswith("QFlags<") and parent is not None:
+                    SDK_FLAGS[parent.spelling + "::" + cursor.spelling] = canonical
+                continue
+            if cursor.kind.name != "CONSTRUCTOR" or not cursor.is_deleted_method():
+                continue
+            parent = cursor.semantic_parent
+            if parent is None:
+                continue
+            owner = parent.spelling
+            deleted.setdefault(owner, set()).add(
+                tuple(re.sub(r"\s+", "", arg.type.spelling) for arg in cursor.get_arguments())
+            )
+            if cursor.is_copy_constructor():
+                noncopyable.add(owner)
+
+    for enum in [*module.enums, *(enum for record in module.classes for enum in record.enums)]:
+        if not enum.is_anonymous:
+            SDK_ENUMS[enum.qualified_name] = {value.name: value.value for value in enum.values}
+    for record in module.classes:
+        for enum in record.enums:
+            if enum.is_anonymous:
+                SDK_ENUMS.setdefault(record.qualified_name + "::", {}).update(
+                    {value.name: value.value for value in enum.values}
+                )
     candidates: dict[str, IRClass] = {
         c.name: c
         for c in module.classes
@@ -130,10 +182,12 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
             methods.append(
                 {
                     "minimum_args": sum(p.default_value is None for p in method.parameters),
+                    "defaults": [p.default_value for p in method.parameters],
                     "owner": name,
                     "name": method.name,
                     "result": method.return_type,
                     "args": arguments,
+                    "parameter_names": [p.name for p in method.parameters],
                     "const": method.is_const,
                     "static": method.is_static,
                     "variadic": method.is_varargs,
@@ -143,11 +197,29 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
         abstract = bool(abstract_methods(name))
         constructors: list[list[str]] = []
         for ctor in record.constructors:
+            if (
+                ctor.is_deleted
+                or ctor.is_deprecated
+                or ctor.is_varargs
+                or tuple(re.sub(r"\s+", "", p.type_spelling) for p in ctor.parameters)
+                in deleted.get(name, set())
+            ):
+                continue
             required = sum(p.default_value is None for p in ctor.parameters)
             for count in range(required, len(ctor.parameters) + 1):
                 constructors.append([p.type_spelling for p in ctor.parameters[:count]])
         classes[name] = {
             "constructors": constructors,
+            "copyable": not record.has_deleted_copy_constructor and name not in noncopyable,
+            "fields": [
+                {
+                    "name": field.name,
+                    "type": field.type_spelling,
+                    "static": field.is_static,
+                    "readonly": field.is_const,
+                }
+                for field in record.fields
+            ],
             "bases": bases,
             "abstract": abstract,
             "default_ctor": not abstract

@@ -41,7 +41,7 @@ select = ["E4", "E7", "E9", "F", "I", "UP"]
 
 [tool.setuptools.data-files]
 "share/wingluauqt" = ["LICENSE", "pyproject.toml"]
-"share/wingluauqt/config" = ["config/bindings.json"]
+"share/wingluauqt/config" = ["config/*.json"]
 "share/wingluauqt/include/qtluau" = ["include/qtluau/*.hpp"]
 "share/wingluauqt/support" = ["support/*.cpp"]
 "share/wingluauqt/support/qt" = ["support/qt/*.cpp"]

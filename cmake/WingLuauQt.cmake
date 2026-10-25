@@ -29,10 +29,11 @@ function(wingluauqt_generate)
   endif()
   file(GLOB_RECURSE _framework_inputs CONFIGURE_DEPENDS
     "${_WINGLUAUQT_ROOT}/python/qtluau_codegen/*.py"
-    "${_WINGLUAUQT_ROOT}/config/bindings.json"
+    "${_WINGLUAUQT_ROOT}/config/*.json"
     "${_WINGLUAUQT_ROOT}/include/qtluau/*.hpp"
     "${_WINGLUAUQT_ROOT}/support/*.cpp"
-    "${_WINGLUAUQT_ROOT}/support/qt/*.cpp")
+    "${_WINGLUAUQT_ROOT}/support/qt/*.cpp"
+    "${_WINGLUAUQT_ROOT}/support/bindings/*")
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${_config}" ${_driver} ${_driver_config} ${ARG_DEPENDS} ${_framework_inputs})
   if(EXISTS "${_WINGLUAUQT_ROOT}/python")

@@ -128,7 +128,13 @@ def emit(
     backend_namespace = (
         "generated_"
         + hashlib.sha256(
-            (registration_namespace + json.dumps(config, sort_keys=True)).encode()
+            (
+                registration_namespace
+                + json.dumps(
+                    {key: config.get(key, {}) for key in ("qt", "common", "exclude", "naming")},
+                    sort_keys=True,
+                )
+            ).encode()
         ).hexdigest()[:12]
     )
     metadata: dict[str, ClassDefinition] = {}

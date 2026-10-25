@@ -7,6 +7,7 @@
 #include "qtluau/bindings.hpp"
 #include "qtluau/qobject_value.hpp"
 #include "qtluau/widget_wrappers.hpp"
+#include <QFlags>
 #include <QHash>
 #include <QList>
 #include <QMap>
@@ -44,7 +45,7 @@ template <class T>
 struct LuaCodec<T *, std::enable_if_t<std::is_base_of_v<QObject, T>>> {
   static T *read(const luabridge::LuaRef &value) {
     if (value.isNil()) {
-      throw std::invalid_argument("Expected a non-null QObject argument");
+      return nullptr;
     }
     QObject *object = nullptr;
     if (auto native = value.template cast<QObjectRef>()) {
@@ -155,6 +156,15 @@ template <class T> struct LuaCodec<T, std::enable_if_t<std::is_enum_v<T>>> {
   static luabridge::LuaRef write(lua_State *L, T value) {
     return LuaCodec<std::underlying_type_t<T>>::write(
         L, static_cast<std::underlying_type_t<T>>(value));
+  }
+};
+template <class Enum> struct LuaCodec<QFlags<Enum>> {
+  using Flags = QFlags<Enum>;
+  static Flags read(const luabridge::LuaRef &value) {
+    return Flags::fromInt(LuaCodec<typename Flags::Int>::read(value));
+  }
+  static luabridge::LuaRef write(lua_State *L, Flags value) {
+    return LuaCodec<typename Flags::Int>::write(L, value.toInt());
   }
 };
 template <> struct LuaCodec<QString> {

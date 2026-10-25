@@ -8,8 +8,8 @@ namespace qtluau {
 template <class T> class QtObjectRef : public QObjectRef {
 public:
     QtObjectRef() : QtObjectRef(new T, true) {}
-    explicit QtObjectRef(T *object, bool owned = false)
-        : QObjectRef(object, owned) {}
+    explicit QtObjectRef(T *object, bool owned = false, bool readOnly = false)
+        : QObjectRef(object, owned, readOnly) {}
     T *get() const {
         auto *object = qobject_cast<T *>(QObjectRef::get());
         if (!object) {

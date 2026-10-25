@@ -49,6 +49,7 @@ struct LuaCodec<T *, std::enable_if_t<std::is_base_of_v<QObject, T>>> {
     }
     QObject *object = nullptr;
     if (auto native = value.template cast<QObjectRef>()) {
+      if constexpr (!std::is_const_v<T>) { native->requireWritable(); }
       object = native->get();
     } else if (auto widget = value.template cast<QtWidgetRef>()) {
       object = widget->get();
@@ -61,19 +62,19 @@ struct LuaCodec<T *, std::enable_if_t<std::is_base_of_v<QObject, T>>> {
     }
     return converted;
   }
-  static luabridge::LuaRef write(lua_State *L, T *value) {
+  static luabridge::LuaRef write(lua_State *L, T *value, bool owned = false) {
     if (!value) {
       return luabridge::LuaRef(L);
     }
     if constexpr (std::is_base_of_v<QWidget, T>) {
-      pushQtWidget(L, value, false);
+      pushQtWidget(L, value, owned);
       auto result = luabridge::LuaRef::fromStack(L, -1);
       lua_pop(L, 1);
       return result;
     } else if constexpr (std::is_base_of_v<QLayout, T>) {
-      return luabridge::LuaRef(L, QtLayoutRef(value, false));
+      return luabridge::LuaRef(L, QtLayoutRef(value, owned));
     } else {
-      return luabridge::LuaRef(L, QObjectRef(value));
+      return luabridge::LuaRef(L, QObjectRef(value, owned));
     }
   }
 };
@@ -247,6 +248,9 @@ template <class T> struct LuaCodec<QHash<QString, T>> {
 };
 template <class T> T qtFromLua(const luabridge::LuaRef &value) {
   return LuaCodec<T>::read(value);
+}
+template <class T> luabridge::LuaRef qtOwnedToLua(lua_State *L, T *value) {
+  return LuaCodec<T *>::write(L, value, true);
 }
 template <class T> luabridge::LuaRef qtToLua(lua_State *L, const T &value) {
   return LuaCodec<T>::write(L, value);

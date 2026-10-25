@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import fnmatch
 
-from .catalog import EXCLUDED_ALWAYS, WIDGETS
+from .catalog import EXCLUDED_ALWAYS, HOST_WINDOW_TYPES, WIDGETS
 from .discovery import scan
 from .models import DiscoveryReport, JsonObject, NativeClass, object_field, string_list_field
 from .type_mapping import is_table_container
@@ -77,13 +77,17 @@ def resolve(
             out.update(ancestors(base, seen))
         return out
 
+    controlled = set(string_list_field(object_field(config, "qt"), "host_windows"))
+    host_roots = HOST_WINDOW_TYPES
     selected: list[str] = []
     rejected: dict[str, str] = {}
     for name, data in sorted(classes.items()):
         lineage = ancestors(name)
         if not lineage.intersection(roots):
             continue
-        if any(matches(base, blacklist) for base in lineage):
+        if (lineage & host_roots and name not in controlled):
+            rejected[name] = "host-controlled window or descendant"
+        elif any(matches(base, blacklist) for base in lineage):
             rejected[name] = "blacklisted class or ancestor"
         elif data["abstract"]:
             rejected[name] = "abstract class"

@@ -111,7 +111,8 @@ _generic_methods = _wrapper_methods["QtWidgetRef"]
 _default_blacklist = string_list_field(
     object_field(object_field(_defaults, "qt"), "discovery"), "blacklist"
 )
-_safety_exclusions = set(string_list_field(object_field(_defaults, "exclude"), "classes"))
+HOST_WINDOW_TYPES = set(string_list_field(object_field(_defaults, "qt"), "host_windows"))
+_safety_exclusions = set(string_list_field(object_field(_defaults, "exclude"), "classes")) | HOST_WINDOW_TYPES
 WIDGET_NATIVE_NAMES = {
     name
     for name in _native
@@ -119,6 +120,7 @@ WIDGET_NATIVE_NAMES = {
     and not (_ancestors(name) & _safety_exclusions)
     and not any(fnmatch.fnmatchcase(name, pattern) for pattern in _default_blacklist)
 }
+WIDGET_NATIVE_NAMES.update(HOST_WINDOW_TYPES)
 WIDGETS: dict[str, ClassDefinition] = {}
 for _name in sorted(
     WIDGET_NATIVE_NAMES, key=lambda name: (name not in {"QWidget", "QLayout"}, name)

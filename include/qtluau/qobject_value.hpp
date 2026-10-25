@@ -11,8 +11,8 @@
 namespace qtluau {
 class QObjectRef {
 public:
-  explicit QObjectRef(QObject *object, bool owned = false)
-      : lifetime_(std::make_shared<Lifetime>(object, owned)) {}
+  explicit QObjectRef(QObject *object, bool owned = false, bool readOnly = false)
+      : lifetime_(std::make_shared<Lifetime>(object, owned, readOnly)) {}
   QObject *get() const {
     auto *object = lifetime_->object.data();
     if (!object) {
@@ -23,7 +23,10 @@ public:
     }
     return object;
   }
-  void releaseOwnership() { lifetime_->owned = false; }
+  void requireWritable() const {
+    if (lifetime_->readOnly) { throw std::runtime_error("Qt object is read-only"); }
+  }
+  void releaseOwnership() { requireWritable(); lifetime_->owned = false; }
   void connect(const std::string &signal, luabridge::LuaRef callback);
   luabridge::LuaRef property(const std::string &name, lua_State *L) const;
   bool setProperty(const std::string &name, const luabridge::LuaRef &value);
@@ -32,7 +35,8 @@ private:
   struct Lifetime {
     QPointer<QObject> object;
     bool owned;
-    Lifetime(QObject *value, bool own) : object(value), owned(own) {}
+    bool readOnly;
+    Lifetime(QObject *value, bool own, bool immutable) : object(value), owned(own), readOnly(immutable) {}
     ~Lifetime() {
       if (owned && object && !object->parent()) {
         if (object->thread() == QThread::currentThread()) {

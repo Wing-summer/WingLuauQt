@@ -10,6 +10,8 @@
 #include <stdexcept>
 
 namespace qtluau {
+using ModuleRegistration = void (*)(lua_State *, QAnyStringView);
+int loadRegisteredModule(lua_State *caller, QAnyStringView name, ModuleRegistration registration);
 // Module values are handed to the host; this does not install a require
 // function.
 inline void rememberModule(lua_State *L, QAnyStringView name, int index) {

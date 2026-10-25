@@ -57,12 +57,14 @@
         "QRhi*"
       ],
       "dependencies": "transitive"
-    }
+    },
+    "host_windows": [
+      "QDialog",
+      "QMainWindow"
+    ]
   },
   "exclude": {
     "classes": [
-      "QMainWindow",
-      "QDialog",
       "QDockWidget",
       "QFile",
       "QThread",

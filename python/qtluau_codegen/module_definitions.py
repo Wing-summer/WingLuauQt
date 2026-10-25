@@ -7,9 +7,11 @@
 import pathlib
 import re
 
-from .declaration_tables import merge_namespace_declarations
+from .declaration_tables import callable_tables, merge_namespace_declarations
+from .definition_graph import DefinitionFiles, partition
 from .extensions import definitions
 from .models import JsonObject
+from .symbol_catalog import emit_symbol_catalog
 
 DECLARATION = re.compile(r"^(?:declare |(?:export )?type )", re.MULTILINE)
 VALUE = re.compile(r"declare (\w+): (.*)", re.DOTALL)
@@ -61,6 +63,8 @@ def split_declarations(source: str) -> tuple[list[str], list[str]]:
 def module_definitions(
     directory: pathlib.Path, extensions: list[JsonObject], extra: dict[str, str] | None = None,
     public_modules: set[str] | None = None,
+    files: DefinitionFiles | None = None, prefix: str = "bindings",
+    categories: JsonObject | None = None,
 ) -> dict[str, str]:
     """Build one shared definition file and one type entry per named module.
 
@@ -81,9 +85,11 @@ def module_definitions(
     extension_types, _ = split_declarations(definitions(extensions))
     types = [*common_types, *qt_types, *extension_types]
     modules = {"": common_globals, "qt": qt_globals}
+    module_types: dict[str, list[str]] = {}
     for module, source in (extra or {}).items():
         aliases, values = split_declarations(source)
         types.extend(aliases)
+        module_types[module] = [match[1] for alias in aliases if (match := re.match(r"type ((?!_qt_)\w+)", alias))]
         modules.setdefault(module, []).extend(values)
     for module in sorted({str(e.get("module", e["namespace"])) for e in extensions}):
         _, values = split_declarations(definitions([e for e in extensions if e.get("module", e["namespace"]) == module]))
@@ -123,16 +129,32 @@ def module_definitions(
         previous = unique_types.setdefault(match[1], source)
         if previous != source:
             raise ValueError(f"Conflicting type declaration: {match[1]}")
-    shared = ["-- Generated shared definitions; load once before module type entries."]
-    shared.extend(references("export " + source) for source in unique_types.values())
-    shared.extend(f"export type {aliases[name]} = {references(body)}" for name, body in value_types.items())
+    all_types = {name: references(source) for name, source in unique_types.items()}
+    all_types.update({aliases[name]: f"type {aliases[name]} = {references(body)}"
+                      for name, body in value_types.items()})
+    globals_: list[str] = []
     for value in modules[""]:
         match = VALUE.fullmatch(value)
-        shared.append(f"declare {match[1]}: {aliases[match[1]]}" if match else references(value))
-    result = {"": "\n\n".join(shared) + "\n"}
-    for module in modules:
-        if module:
-            if module not in aliases:
-                raise ValueError(f"Module must declare its value: {module}")
-            result[module] = f"--!strict\n-- Generated type entry for {module}; runtime supplies the module value.\nreturn (nil :: any) :: {aliases[module]}\n"
+        globals_.append(f"declare {match[1]}: {aliases[match[1]]}" if match else references(value))
+    entries = {module: f"return (nil :: any) :: {aliases[module]}"
+               for module in modules if module}
+    bundle = files if files is not None else DefinitionFiles()
+    emit_symbol_catalog(all_types, value_types, public_names, globals_, bundle, prefix, categories or {}, module_types)
+    declaration_types: dict[str, str] = {}
+    for name, source in all_types.items():
+        declaration_types[name] = source if name.startswith("_qt_") else callable_tables(source, declaration_types)
+    result = partition(declaration_types, globals_, entries, bundle, prefix)
+    remaining_globals = list(globals_)
+    if files is not None:
+        for module in sorted(public):
+            declaration = f"declare {module}: {aliases[module]}"
+            if declaration in remaining_globals:
+                remaining_globals.remove(declaration)
+                result[module] = declaration + "\n"
+                bundle.preload.append(f"{prefix}_{module}.d.luau")
+    result[""] = "\n\n".join(remaining_globals) + "\n"
+    if files is None:
+        # Legacy in-memory callers have no file resolver; retain a complete ambient unit.
+        result[""] = "\n\n".join("export " + source for source in all_types.values()) + "\n" + result[""]
+        result.update({module: "--!strict\n" + source + "\n" for module, source in entries.items()})
     return result

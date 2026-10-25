@@ -45,6 +45,7 @@ luabridge::LuaRef QObjectRef::property(const std::string &name,
 
 bool QObjectRef::setProperty(const std::string &name,
                              const luabridge::LuaRef &value) {
+  requireWritable();
   QObject *widget = get();
   const QByteArray key(name.data(), static_cast<qsizetype>(name.size()));
   const int index = widget->metaObject()->indexOfProperty(key.constData());

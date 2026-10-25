@@ -66,7 +66,7 @@ def main() -> None:
             "dialogs",
         ]
         framework_project = pathlib.Path(framework_output) / "project"
-        export_project(framework_config, framework_project, root / "examples")
+        framework_manifest = export_project(framework_config, framework_project, root / "examples")
         assert not NATIVE_CLASSES["QCborStreamReader"].get("copyable", True)
         cbor_source = (framework_project / "generated/custom/sdk_QCborValue.cpp").read_text()
         assert re.search(r"QCborStreamReader\s*&\s*arg0", cbor_source)
@@ -80,7 +80,8 @@ def main() -> None:
         subprocess.run(
             [
                 str(args.definition_checker),
-                str(framework_project / "definitions/module_0.d.luau"),
+                "--merge",
+                *[str(framework_project / "definitions" / filename) for filename in framework_manifest["definition_preload"]],
             ],
             check=True,
         )
@@ -179,14 +180,15 @@ def main() -> None:
         assert "AUTOMOC ON" in (out / "CMakeLists.txt").read_text()
         for source in (out / "generated").glob("*.cpp"):
             assert str(root / "examples/native") not in source.read_text()
-        public_definition = (out / "definitions/module_0.d.luau").read_text()
-        qt_definition = (out / "definitions/module_3.d.luau").read_text()
+        public_definition = "\n".join((out / "definitions" / filename).read_text() for filename in manifest["definition_preload"])
+        qt_definition = (out / "definitions" / manifest["modules"]["qt"]).read_text()
         assert public_definition.count("declare qt:") == 1
         assert "QPushButton:" in public_definition and "QtTools:" in public_definition
-        assert "return (nil :: any) :: __WingLuauQtValue_qt" in qt_definition
-        declarations = [out / "definitions" / f"module_{i}.d.luau" for i in range(5)]
-        assert set((out / "definitions").glob("*.d.luau")) == set(declarations)
-        assert sum(path.stat().st_size for path in declarations[1:]) < len(public_definition) // 10
+        assert "declare qt: __WingLuauQtValue_qt" in qt_definition
+        assert "return (nil :: any)" not in qt_definition
+        declarations = [out / "definitions" / filename for filename in manifest["definition_preload"]]
+        expected = set(manifest["modules"].values()) | {filename for filename in manifest["definition_bytes"] if filename.endswith(".d.luau")}
+        assert {path.name for path in (out / "definitions").glob("*.d.luau")} == expected
         subprocess.run(
             [
                 str(args.definition_checker),
@@ -277,9 +279,15 @@ def main() -> None:
                     "policy()",
                 )
             )
-        reader = public_definition.split("export type __WingLuauQtValue_reader = ", 1)[1].split(
-            "\n\n", 1
-        )[0]
+        parsed_types, _ = split_declarations(public_definition)
+        by_name: dict[str, str] = {}
+        for declaration in parsed_types:
+            match = re.match(r"type (\w+)", declaration)
+            assert match is not None
+            by_name[match[1]] = declaration.split("=", 1)[1].strip()
+        reader = by_name["__WingLuauQtValue_reader"]
+        while reader in by_name:
+            reader = by_name[reader]
         assert "read_int:" in reader and "QObject" not in reader and "write_int:" not in reader
         wrong_context = copy.deepcopy(config)
         wrong_context["extensions"][-1]["classes"]["HostServices"]["context"] = []

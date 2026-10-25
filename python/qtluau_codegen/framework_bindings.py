@@ -15,7 +15,7 @@ from typing import cast
 
 from .assets import support_root
 from .catalog import BACKENDS, NATIVE_CLASSES, TYPE_DEFAULTS, VALUE_TYPES, WIDGETS
-from .discovery import SDK_ENUMS, SDK_FLAGS
+from .discovery import SDK_ENUMS, SDK_FLAGS, SDK_FUNCTIONS
 from .exclusions import excluded_method
 from .extensions import identifier, write
 from .models import JsonObject, NativeMethod, object_field, string_list_field
@@ -123,6 +123,12 @@ class SdkBindings:
     def conversion(self, spelling: str, owner: str, result: bool = False) -> Conversion | None:
         """Infer a supported native conversion, retaining its actual type dependencies."""
         bare = re.sub(r"\bconst\b|[&]", "", spelling).strip()
+        if spelling.strip() in {"const char *", "const char*"} and not result:
+            return Conversion("QtArgument<QString>", "string | ustring",
+                              "{expr}.value.toUtf8().constData()", "{expr}")
+        if result and bare == "QString" and self.config.get("_ustring_results"):
+            return Conversion("QString", "ustring", "{expr}",
+                              "luabridge::LuaRef(L, QtValueRef<QString>({expr}))")
         if "&" in spelling and not spelling.startswith("const "):
             backend = BACKENDS.get(bare, {}).get("cpp_type", bare)
             if (
@@ -183,7 +189,7 @@ class SdkBindings:
                 return None
             return Conversion(
                 chosen[0],
-                chosen[1],
+                "string | ustring" if bare == "QString" and not result else chosen[1],
                 base[2] if base else "{expr}",
                 returned[2] if returned else "{expr}",
             )
@@ -191,8 +197,7 @@ class SdkBindings:
         if pointer:
             native = pointer[1]
             if (
-                spelling.startswith("const ")
-                or not self.allowed(native)
+                not self.allowed(native)
                 or not self.object_type(native)
             ):
                 return None
@@ -203,13 +208,14 @@ class SdkBindings:
                     "{expr}.value",
                     "qtToLua(L, {expr})",
                 )
-            return Conversion(
-                "QObjectRef",
-                "_qt_" + native,
-                f"qobject_cast<{native} *>({{expr}}.get())",
-                f"luabridge::LuaRef(L, QtObjectRef<{native}>({{expr}}, false))",
-                (native,),
-            )
+            immutable = spelling.startswith("const ")
+            read = f"qobject_cast<{native} *>({{expr}}.get())"
+            if not immutable:
+                read = "({expr}.requireWritable(), " + read + ")"
+            write = (f"luabridge::LuaRef(L, QtObjectRef<{native}>(const_cast<{native} *>({{expr}}), false, true))"
+                     if immutable else f"luabridge::LuaRef(L, QtObjectRef<{native}>({{expr}}, false))")
+            write = "({expr} ? " + write + " : luabridge::LuaRef(L))"
+            return Conversion("QObjectRef", "_qt_" + native + ("?" if result else ""), read, write, (native,))
         container = re.fullmatch(r"(QList|QVector)<(.+)>", bare)
         if container:
             element = self.conversion(container[2].strip(), owner, result)
@@ -389,6 +395,8 @@ class SdkBindings:
                     raise ValueError("Missing native default for optional overload")
                 call_args[index] = self.default(value, method["args"][index], native)
             body: list[str] = []
+            if receiver and self.object_type(native) and not method["const"]:
+                body.append("self.requireWritable();")
             returns: list[tuple[str, Conversion]] = []
             for index, kind, converted, pointer in outputs:
                 body.append(f"{kind} output{index}{{}};")
@@ -477,6 +485,7 @@ class SdkBindings:
             "#include <tuple>",
             "namespace qtluau {",
             f"void {symbol}(lua_State *L) {{",
+            f'RegistrationGuard registration(L, "sdk.{native}"); if (!registration) {{ return; }}',
         ]
         register = (
             f"deriveClass<{wrapper}, QObjectRef>"
@@ -581,16 +590,18 @@ class SdkBindings:
                 continue
             enum_code.extend(
                 [
-                    f"auto enum_{label} = luabridge::newTable(L);",
+                    f"auto enum_{label} = luabridge::newTable(lua_mainthread(L));",
                     *[f'enum_{label}["{key}"] = {value};' for key, value in values.items()],
+                    f'enum_{label}.push(L); lua_setreadonly(L, -1, true); lua_pop(L, 1);',
                     f'cls.addStaticProperty("{label}", [enum_{label}]() {{ return enum_{label}; }});',
                 ]
             )
-            fields.append(f"    {label}: {{[string]: number}},")
+            fields.append(f"    {label}: {{" + ", ".join(f"{key}: number" for key in values) + "},")
         if enum_code:
             code[-3:-3] = enum_code
         if constructor_types:
-            fields.append("    __call: " + " & ".join(constructor_types) + ",")
+            fields.append("    __call: " + " & ".join(dict.fromkeys(constructor_types)) + ",")
+        code.insert(-2, "registration.complete();")
         write(output / f"sdk_{native}.cpp", "\n".join(code) + "\n")
         return (
             symbol,
@@ -614,9 +625,12 @@ def emit_framework_bindings(
     roots: dict[str, JsonObject] = {}
     providers: dict[str, tuple[str, NativeMethod]] = {}
     module_tables: dict[str, dict[str, str]] = {}
+    functions: dict[str, JsonObject] = {}
     aliases: dict[str, str] = {}
     for group in selected:
         entry = object_field(groups, group)
+        for module in object_field(entry, "functions"):
+            functions[module] = object_field(object_field(entry, "functions"), module)
         for native in object_field(entry, "classes"):
             roots[native] = object_field(object_field(entry, "classes"), native)
         for alias, native in object_field(entry, "aliases").items():
@@ -690,17 +704,27 @@ def emit_framework_bindings(
         types.append(definition)
         shapes[native] = shape
     declarations = [f"void {symbol}(lua_State *L);" for symbol in symbols]
+    public_roots = set(aliases.values()) | set(string_list_field(config, "_sdk_required_types"))
+    for module, table in module_tables.items():
+        if not requires_module(config, module):
+            public_roots.update(table.values())
+    public_classes: set[str] = set()
+    pending = list(public_roots)
+    while pending:
+        native = pending.pop()
+        if native in public_classes or native not in generator.classes:
+            continue
+        public_classes.add(native)
+        pending.extend(generator.dependencies(native, bool(roots.get(native, {}).get("static_only", False))))
+    config["_sdk_public_types"] = sorted(public_classes)
     source = [
-        '#include "qtluau/packages.hpp"',
-        '#include "qtluau/object_ref.hpp"',
-        *[
-            f"#include <{name}>"
-            for name in sorted(generator.classes | {owner for owner, _ in providers.values()})
-        ],
-        "namespace qtluau {",
-        *declarations,
-        "void registerFrameworkSdk(lua_State *L) {",
-        *[f"{symbol}(L);" for symbol in symbols],
+        '#include "qtluau/packages.hpp"', '#include "qtluau/object_ref.hpp"',
+        *[f"#include <{name}>" for name in sorted(generator.classes | {owner for owner, _ in providers.values()})],
+        "namespace qtluau {", *declarations,
+        "void registerFrameworkQtSdk(lua_State *L) {",
+        *[f"register_sdk_{native}(L);" for native in sorted(generator.classes - public_classes)],
+        "}", "void registerFrameworkSdk(lua_State *L) {",
+        *[f"register_sdk_{native}(L);" for native in sorted(public_classes)],
     ]
     public: dict[str, list[str]] = {}
     for alias, native in aliases.items():
@@ -754,7 +778,32 @@ def emit_framework_bindings(
             "properties": [],
         }
 
-    metadata.append(dict(make_entry("registerFrameworkSdk", ""), requires_qt=True))
+    metadata.append(make_entry("registerFrameworkSdk", ""))
+    metadata.append(make_entry("registerFrameworkQtSdk", "qt"))
+    for module, rule in functions.items():
+        emitter = SdkBindings(dict(config, _ustring_results=rule.get("qstring_result") == "ustring"))
+        symbol = "registerSdkModule_" + identifier(module)
+        metadata.append(make_entry(symbol, module))
+        source[0:0] = [f"#include <{header}>" for header in string_list_field(rule, "headers")]
+        source.extend([f"void {symbol}(lua_State *L) {{",
+                       f'auto scope = luabridge::getGlobalNamespace(L).beginNamespace("{module}");'])
+        function_overloads: dict[str, dict[str, tuple[str, str]]] = {}
+        for method in SDK_FUNCTIONS:
+            if not emitter.method_allowed("", method) or not any(
+                fnmatch.fnmatchcase(method["name"], pattern)
+                for pattern in string_list_field(rule, "include")
+            ):
+                continue
+            name = text(object_field(rule, "rename"), method["name"], method["name"])
+            for checker, expression, signature in emitter.method("", method):
+                function_overloads.setdefault(name, {}).setdefault(checker, (expression, signature))
+        fields: list[str] = []
+        for name, overloads in function_overloads.items():
+            source.append(f'scope.addFunction("{name}", ' + ", ".join(v[0] for v in overloads.values()) + ");")
+            fields.append(f"    {name}: " + " & ".join(dict.fromkeys(v[1] for v in overloads.values())) + ",")
+        source.extend(["scope.endNamespace();", f'lua_getglobal(L, "{module}");',
+                       f'rememberModule(L, "{module}", -1);', "lua_pop(L, 1);", "}"])
+        definitions[module] = f"declare {module}: {{\n" + "\n".join(fields) + "\n}\n"
     for module, table in module_tables.items():
         identifier(module)
         symbol = "registerSdkModule_" + module

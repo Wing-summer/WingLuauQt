@@ -24,6 +24,10 @@ def emit_callbacks(config: JsonObject, output: pathlib.Path) -> dict[str, str]:
         "#include <stdexcept>",
         "namespace qtluau {",
     ]
+    if any(function.get("wrap_existing", False)
+           for entry in object_list_field(config, "callback_sets")
+           for function in object_list_field(entry, "functions")):
+        source.append("namespace { int continueCallback(lua_State *L, int status) { if (status != LUA_OK) { lua_error(L); } return lua_gettop(L); } }")
     initializers = [
         "// Generated native callback initializers; include inside the host registration scope."
     ]
@@ -68,7 +72,20 @@ def emit_callbacks(config: JsonObject, output: pathlib.Path) -> dict[str, str]:
             + (f'.beginNamespace("{namespace}")' if namespace else "")
             + ";"
         )
-        source.extend(f'scope.addFunction("{fn}", callbacks.{fn});' for fn in names)
+        for fn, function in zip(names, functions, strict=True):
+            if not isinstance(function.get("wrap_existing", False), bool):
+                raise ValueError("wrap_existing must be a boolean")
+            if function.get("wrap_existing", False):
+                key = "qtluau.callback.original." + namespace + "." + fn
+                source.extend([
+                    f'lua_getglobal(L, "{namespace}");' if namespace else "lua_pushvalue(L, LUA_GLOBALSINDEX);",
+                    f'lua_getfield(L, LUA_REGISTRYINDEX, "{key}");',
+                    f'if (lua_isnil(L, -1)) {{ lua_pop(L, 1); lua_getfield(L, -1, "{fn}"); if (!lua_isfunction(L, -1)) {{ throw std::runtime_error("Original callback is missing"); }} lua_pushvalue(L, -1); lua_setfield(L, LUA_REGISTRYINDEX, "{key}"); }}',
+                    f'lua_pushcclosurek(L, callbacks.{fn}, "{fn}", 1, continueCallback);',
+                    f'lua_setfield(L, -2, "{fn}"); lua_pop(L, 1);',
+                ])
+            else:
+                source.append(f'scope.addFunction("{fn}", callbacks.{fn});')
         if module:
             source.extend(
                 [
@@ -80,7 +97,13 @@ def emit_callbacks(config: JsonObject, output: pathlib.Path) -> dict[str, str]:
         if module and requires_module(config, module):
             source.extend(["lua_pushnil(L);", f'lua_setglobal(L, "{module}");'])
         source.append("}")
-        text = "\n".join(emit_ir_function(f) for f in functions) + "\n"
+        declared_functions = [function for function in functions if not function.get("preserve_builtin_type", False)]
+        for function in functions:
+            if function.get("preserve_builtin_type", False) and not function.get("wrap_existing", False):
+                raise ValueError("Preserving a builtin type requires wrap_existing")
+        if not declared_functions:
+            continue
+        text = "\n".join(emit_ir_function(f) for f in declared_functions) + "\n"
         if namespace:
             fields: list[str] = []
             for line in text.splitlines():

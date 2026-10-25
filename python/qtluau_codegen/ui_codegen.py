@@ -67,6 +67,7 @@ def emit_ui_loader(config: JsonObject, output: Path, widgets: list[str]) -> None
         "// SPDX-License-Identifier: BSD-3-Clause",
         "// Generated; do not edit.",
         '#include "qtluau/ui_support.hpp"',
+        '#include "qtluau/ui_notifications.hpp"',
         "#include <QApplication>",
         "#include <QBuffer>",
         "#include <QtWidgets/QtWidgets>",
@@ -117,14 +118,16 @@ public:
   explicit GeneratedUiLoader(const QDir &directory) { setWorkingDirectory(directory); }
   bool resolvedRoot() const { return resolvedRoot_; }
   QWidget *createWidget(const QString &type, QWidget *parent, const QString &name) override {
+    const UiWidgetRequest request{type, name, parent, !parent, availableWidgets().contains(type)};
     if (auto resolver = uiResolver()) {
-      const UiWidgetResult result = resolver({type, name, parent, !parent, availableWidgets().contains(type)});
+      const UiWidgetResult result = resolver(request);
       if (result.action == UiWidgetAction::Reject) { return nullptr; }
       if (result.action == UiWidgetAction::Use) {
         if (!result.widget) { return nullptr; }
         if (result.widget->parentWidget() != parent) { result.widget->setParent(parent); }
         result.widget->setObjectName(name);
         resolvedRoot_ = !parent || resolvedRoot_;
+        notifyUiWidgetCreated(result.widget, request);
         return result.widget;
       }
     }
@@ -133,10 +136,13 @@ public:
       if (!widget) { return nullptr; }
       if (widget->parentWidget() != parent) { widget->setParent(parent); }
       widget->setObjectName(name);
+      notifyUiWidgetCreated(widget, request);
       return widget;
     }
     if (!allowedWidget(type) && (parent || !allowedRoot(type))) { return nullptr; }
-    return QUiLoader::createWidget(type, parent, name);
+    QWidget *widget = QUiLoader::createWidget(type, parent, name);
+    notifyUiWidgetCreated(widget, request);
+    return widget;
   }
   QLayout *createLayout(const QString &type, QObject *parent, const QString &name) override {
     return allowedLayout(type) ? QUiLoader::createLayout(type, parent, name) : nullptr;
@@ -157,9 +163,15 @@ QWidget *loadUiDocument(const QByteArray &bytes, const QDir &directory, QString 
     if (error) { *error = loader.errorString(); }
     return nullptr;
   }
-  return loader.resolvedRoot() ? root : adaptRoot(root, error);
+  if (loader.resolvedRoot()) {
+    try { finalizeUiWidget(root); } catch (...) { delete root; throw; }
+    return root;
+  }
+  return adaptRoot(root, error);
 }
 } // namespace qtluau::detail
 """,
     ]
+    lines.extend(["namespace qtluau::detail {", "bool isHostWindowClass(const QString &name) {",
+                  "return " + (" || ".join('name == QStringLiteral("' + name + '")' for name in string_list_field(object_field(config, "qt"), "host_windows")) or "false") + ";", "}", "}"])
     (output / "ui_loader.cpp").write_text("\n".join(lines))

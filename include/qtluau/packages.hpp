@@ -6,6 +6,7 @@
 #define QTLUAU_INCLUDE_QTLUAU_PACKAGES_HPP
 
 #include "qtluau/module_values.hpp"
+#include "qtluau/registration_guard.hpp"
 #include "qtluau/value_conversion.hpp"
 
 namespace qtluau {

@@ -35,6 +35,9 @@ def mapped_type(
                 else "_qt_QObject"
             )
         )
+        if result and ((widget_types is not None and native in widget_types) or
+                       (layout_types is not None and native in layout_types)):
+            lua = "_qt_" + native
         return (
             "luabridge::LuaRef" if result else f"QtArgument<{bare}>",
             lua,

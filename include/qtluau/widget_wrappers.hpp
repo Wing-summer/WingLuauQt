@@ -34,11 +34,21 @@ struct LayoutLifetime {
 };
 
 namespace detail {
+bool isHostWindowClass(const QString &name);
+QWidget *createHostWindow(const QString &name);
 template <class T, class... Args> T *makeQtWidget(Args &&...args) {
   auto *app = qobject_cast<QApplication *>(QCoreApplication::instance());
   if (!app || QThread::currentThread() != app->thread()) {
     throw std::runtime_error(
         "Qt GUI objects require a host QApplication and its GUI thread");
+  }
+  if constexpr (std::is_base_of_v<QWidget, T> && sizeof...(Args) == 0) {
+    if (isHostWindowClass(QString::fromLatin1(T::staticMetaObject.className()))) {
+      auto *widget = createHostWindow(QString::fromLatin1(T::staticMetaObject.className()));
+      auto *typed = qobject_cast<T *>(widget);
+      if (!typed) { delete widget; throw std::runtime_error("Incompatible host window factory"); }
+      return typed;
+    }
   }
   if constexpr (std::is_constructible_v<T, Args...>) {
     return new T(std::forward<Args>(args)...);

@@ -140,6 +140,33 @@
           "items": {
             "type": "string"
           }
+        },
+        "host_windows": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "content_methods": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "content_accessors": {
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "get",
+              "set",
+              "take",
+              "menu",
+              "menu_widget",
+              "set_menu"
+            ]
+          }
         }
       },
       "additionalProperties": false
@@ -589,6 +616,14 @@
                 "native": {
                   "type": "string",
                   "pattern": "^&?[A-Za-z_]\\w*(?:::[A-Za-z_]\\w*)*$"
+                },
+                "wrap_existing": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "preserve_builtin_type": {
+                  "type": "boolean",
+                  "default": false
                 }
               },
               "additionalProperties": false,
@@ -636,9 +671,45 @@
           "require": {
             "type": "boolean",
             "default": false
+          },
+          "external": {
+            "type": "boolean",
+            "default": false
           }
         },
         "additionalProperties": false
+      }
+    },
+    "lua_c_apis": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "module": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "module",
+          "root",
+          "sources"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "symbol_categories": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
       }
     }
   },

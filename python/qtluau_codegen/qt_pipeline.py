@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -223,6 +224,9 @@ def emit(
                 )
             ):
                 continue
+            if any(matches(dep, excluded_classes) for dep in re.findall(r"\bQ[A-Za-z0-9_]+\b", " ".join([method["result"], *method["args"]]))):
+                skipped.append({"class": name, "method": method, "reason": "excluded signature type"})
+                continue
             for count in range(
                 method.get("minimum_args", len(method["args"])), len(method["args"]) + 1
             ):
@@ -266,6 +270,10 @@ def emit(
             declaration + " {",
             "    (void)cls;",
         ]
+        accessors = object_field(object_field(config, "qt"), "content_accessors")
+        if any(accessors.get(method["owner"] + "::" + method["name"]) in {"menu", "menu_widget", "set_menu"}
+               for overloads in groups.values() for method, _ in overloads):
+            code.insert(0, '#include "qtluau/window_menu.hpp"')
         methods: list[tuple[str, list[tuple[str, str]], str]] = []
         for mn, overloads in sorted(groups.items()):
             lambdas: list[str] = []
@@ -281,7 +289,22 @@ def emit(
                     if len(types) - 1 == len(method["args"])
                     else f"native->{owner}::{mn}({callargs})"
                 )
-                statement = types[0][2].format(expr=expr)
+                if owner + "::" + mn in string_list_field(object_field(config, "qt"), "content_methods"):
+                    expr = expr.replace("native->", "qtluau::widgetContentTarget(native)->")
+                operation = object_field(object_field(config, "qt"), "content_accessors").get(owner + "::" + mn)
+                if operation == "get":
+                    expr = "qtluau::windowContentTarget(native)"
+                elif operation == "set":
+                    expr = f"qtluau::replaceWidgetContentTarget(native, {callargs})"
+                elif operation == "take":
+                    expr = "qtluau::takeWidgetContentTarget(native)"
+                elif operation in {"menu", "menu_widget"}:
+                    expr = "qtluau::windowMenuTarget(native, " + ("true" if operation == "menu" else "false") + ")"
+                elif operation == "set_menu":
+                    expr = f"qtluau::replaceWindowMenuTarget(native, {callargs})"
+                elif operation is not None:
+                    raise ValueError("Unsupported window content operation: " + str(operation))
+                statement = ("qtluau::qtOwnedToLua(L, " + expr + ")" if operation == "take" else types[0][2].format(expr=expr))
                 body = ("" if types[0][0] == "void" else "return ") + statement + ";"
                 state_parameter = ", lua_State* L" if "qtToLua" in types[0][2] else ""
                 lambdas.append(

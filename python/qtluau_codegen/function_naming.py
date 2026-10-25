@@ -130,9 +130,16 @@ def apply_function_naming(config: JsonObject, output: pathlib.Path) -> None:
             continue
         source = path.read_text()
         source = REGISTRATION.sub(
-            lambda m: m[1] + "qtluau::generated::functionName(" + m[2] + ")" + m[3], source
+            lambda m: (
+                m[1]
+                + (
+                    '"' + snake_case(m[2][1:-1]) + '"'
+                    if m[2].startswith('"')
+                    else "qtluau::generated::functionName(" + m[2] + ")"
+                )
+                + m[3]
+            ),
+            source,
         )
-        source = PACKAGE_FUNCTION.sub(
-            lambda m: m[1] + "qtluau::generated::functionName(" + m[2] + ")", source
-        )
+        source = PACKAGE_FUNCTION.sub(lambda m: m[1] + '"' + snake_case(m[2][1:-1]) + '"', source)
         path.write_text(source)

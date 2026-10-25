@@ -43,13 +43,23 @@ def main() -> None:
         definition.write_text("declare qt: { QWidget: () -> Widget, getText: () -> string }\n")
         (root / "include/qtluau").mkdir(parents=True)
         (root / "include/qtluau/bindings.hpp").write_text("#ifndef TEST_BINDINGS_HPP\n#define TEST_BINDINGS_HPP\n#endif\n")
-        code = root / "registration.cpp"
-        code.write_text('cls.addFunction("getText", &Native::getText);\n')
+        (root / "generated/custom").mkdir(parents=True)
+        code = root / "generated/custom/registration.cpp"
+        code.write_text(
+            'cls.addFunction("getText", &Native::getText);\n'
+            'cls.addStaticFunction("setImage", &Native::setImage);\n'
+            'cls.addFunction(#method, &Native::method);\n'
+            'packageFunction(L, "openFile", callback);\n'
+        )
         apply_function_naming({"naming": {"functions": "snake_case"}}, root)
         assert "QWidget:" in definition.read_text()
         assert "get_text:" in definition.read_text()
         assert "q_widget:" not in definition.read_text()
-        assert 'functionName("getText")' in code.read_text()
+        assert 'addFunction("get_text",' in code.read_text()
+        assert 'addStaticFunction("set_image",' in code.read_text()
+        assert 'packageFunction(L, "open_file",' in code.read_text()
+        assert 'functionName("' not in code.read_text()
+        assert 'functionName(#method)' in code.read_text()
         assert "&Native::getText" in code.read_text()
         assert snake_case("toUTF8") == "to_utf8"
         assert "get_text:" in rename_declarations({}, "declare qt: { getText: () -> string }")

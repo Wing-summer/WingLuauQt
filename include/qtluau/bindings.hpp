@@ -43,6 +43,7 @@ struct UiWidgetRequest {
   QWidget *parent = nullptr;
   bool isRoot = false;
   bool isKnown = false;
+  bool fromUi = true;
 };
 enum class UiWidgetAction { Default, Reject, Use };
 struct UiWidgetResult {
@@ -51,6 +52,22 @@ struct UiWidgetResult {
 };
 using UiWidgetResolver = std::function<UiWidgetResult(const UiWidgetRequest &)>;
 void setUiWidgetResolver(UiWidgetResolver resolver);
+using WidgetContentSetter = std::function<void(QWidget *, QWidget *)>;
+using WidgetContentTaker = std::function<QWidget *(QWidget *)>;
+void setWidgetContentMutators(WidgetContentSetter setter, WidgetContentTaker taker);
+void replaceWidgetContentTarget(QWidget *widget, QWidget *content);
+QWidget *takeWidgetContentTarget(QWidget *widget);
+QWidget *windowContentTarget(QWidget *widget);
+using WidgetContentResolver = std::function<QWidget *(QWidget *)>;
+using UiWidgetFinalizer = std::function<void(QWidget *)>;
+void setWidgetContentResolver(WidgetContentResolver resolver);
+void setUiWidgetFinalizer(UiWidgetFinalizer finalizer);
+QWidget *widgetContentTarget(QWidget *widget);
+namespace detail {
+bool isHostWindowClass(const QString &name);
+QWidget *createHostWindow(const QString &name);
+void finalizeUiWidget(QWidget *widget);
+}
 
 // Native host-side counterparts to the Lua UI loader. Returned widgets are
 // newly allocated and owned by the caller until parented. File loading enforces

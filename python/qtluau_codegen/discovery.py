@@ -21,6 +21,8 @@ from .models import NativeClass, NativeMethod
 SDK_ENUMS: dict[str, dict[str, int]] = {}
 #: Fully resolved QFlags aliases, discovered from compiler typedef declarations.
 SDK_FLAGS: dict[str, str] = {}
+#: Native free functions discovered alongside SDK classes.
+SDK_FUNCTIONS: list[NativeMethod] = []
 
 
 def command(args: list[str]) -> str:
@@ -167,6 +169,17 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
                 pending.discard(signature(method))
         return pending
 
+    for function in module.functions:
+        SDK_FUNCTIONS.append({
+            "minimum_args": sum(p.default_value is None for p in function.parameters),
+            "defaults": [p.default_value for p in function.parameters],
+            "owner": "", "name": function.qualified_name,
+            "result": function.return_type,
+            "args": [p.type_spelling for p in function.parameters],
+            "parameter_names": [p.name for p in function.parameters],
+            "const": False, "static": True,
+            "variadic": function.is_varargs, "deprecated": function.is_deprecated,
+        })
     classes: dict[str, NativeClass] = {}
     for name, record in candidates.items():
         bases = [base.qualified_name for base in record.bases]

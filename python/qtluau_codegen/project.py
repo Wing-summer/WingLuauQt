@@ -17,12 +17,14 @@ import sys
 from .assets import support_root
 from .callback_bindings import emit_callbacks
 from .cpp_literals import qt_string
+from .definition_graph import DefinitionFiles
 from .extensions import identifier, paths, write
 from .extra_bindings import extra_bindings
 from .framework_bindings import emit_framework_bindings
 from .function_naming import apply_function_naming
 from .generate_definitions import generate
 from .header_guards import guard_headers
+from .lua_c_api import emit_lua_c_apis
 from .models import JsonObject, object_field, object_list_field, string_list_field
 from .module_definitions import module_definitions
 from .module_policy import requires_module
@@ -293,16 +295,20 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path)
     extra_metadata.extend(framework_metadata)
     for module, source in framework_definitions.items():
         extra_definitions[module] = extra_definitions.get(module, "") + source
+    lua_c_api_report: JsonObject = {}
+    for module, source in emit_lua_c_apis(config, base, lua_c_api_report).items():
+        extra_definitions[module] = extra_definitions.get(module, "") + source
     for module, source in emit_callbacks(config, generated).items():
         extra_definitions[module] = extra_definitions.get(module, "") + source
     metadata.extend(extra_metadata)
-    named_modules = {"qt"} | {str(entry["module"]) for entry in metadata if entry.get("module")}
+    named_modules = set(extra_definitions) - {""} | {"qt"} | {str(entry["module"]) for entry in metadata if entry.get("module")}
     for module in object_field(config, "modules"):
         if module not in named_modules:
             raise ValueError("Unknown module exposure policy: " + module)
     required_modules = {module for module in named_modules if requires_module(config, module)}
     public_modules = named_modules - required_modules
-    module_text = module_definitions(definitions_dir, metadata, extra_definitions, public_modules)
+    definition_bundle = DefinitionFiles()
+    module_text = module_definitions(definitions_dir, metadata, extra_definitions, public_modules, definition_bundle, name, object_field(config, "symbol_categories"))
     modules = sorted(module_text)
     symbols = [module_symbol(m) for m in modules]
     if len(set(symbols)) != len(symbols):
@@ -393,13 +399,15 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path)
         "include/qtluau/constructor_registration.hpp",
     ):
         (output / filename).unlink(missing_ok=True)
-    for index, module in enumerate(modules):
-        filename = f"module_{index}.d.luau"
+    for module in modules:
+        filename = f"{name}_{module or 'public'}.d.luau"
         write(definitions_dir / filename, module_text[module])
-        definition_paths[module] = f"{name}_{filename}"
-    expected_definitions = {f"module_{index}.d.luau" for index in range(len(modules))}
-    for artifact in definitions_dir.glob("*.d.luau"):
-        if artifact.name not in expected_definitions:
+        definition_paths[module] = filename
+    for filename, source in definition_bundle.sources.items():
+        write(definitions_dir / filename, source)
+    expected_definitions = set(definition_paths.values()) | set(definition_bundle.sources)
+    for artifact in definitions_dir.iterdir():
+        if artifact.is_file() and artifact.name not in expected_definitions:
             artifact.unlink()
     declarations = [
         "#pragma once",
@@ -434,6 +442,8 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path)
             f"void registerAllModules(lua_State *L, bool installRequire = {str(require_helper).lower()});",
             "QHash<QString, QString> definitionFiles();",
             "QHash<QString, QString> moduleFiles();",
+            "QString symbolCatalogFile();",
+            "void registerEagerModules(lua_State *L);",
             "}",
         ]
     )
@@ -480,6 +490,7 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path)
     generated_modules = {"support.cpp", "aggregate.cpp", "definitions.cpp"}
     private_header = [
         "#pragma once",
+        '#include "static_registration.hpp"',
         '#include "qtluau/bindings.hpp"',
         f"namespace {namespace}::detail {{",
         "bool done(lua_State *L, const char *key);",
@@ -508,24 +519,7 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path)
     for module_index, module in enumerate(modules):
         chunk_start = len(cpp)
         entries = [e for e in metadata if e.get("module", e["namespace"]) == module]
-        type_spellings = [
-            str(typ)
-            for entry in entries
-            for method in object_list_field(entry, "methods")
-            for typ in [method["result"], *string_list_field(method, "parameters")]
-        ] + [
-            str(prop["type"])
-            for entry in entries
-            for prop in object_list_field(entry, "properties")
-        ]
-        needs_qt = (
-            module == "qt"
-            or any(entry.get("requires_qt", False) for entry in entries)
-            or any(e["base"] == "QWidget" for e in entries)
-            or any(
-                "_qt_" in spelling or re.search(r"\bany\b", spelling) for spelling in type_spellings
-            )
-        )
+        needs_qt = module == "qt" or any(e["base"] == "QWidget" for e in entries)
         key = name + ".module." + module
         cpp.extend(
             [
@@ -533,6 +527,7 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path)
                 f'const char *key = "{key}"; if (done(L,key)) return;',
                 "ModuleScope scope(L);",
                 "common(L);",
+                "qtluau::registerQtValueBindings(L);",
             ]
         )
         if module:
@@ -587,7 +582,6 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path)
             'throw std::invalid_argument("Unknown binding module");',
             "}",
             "void registerAllModules(lua_State *L, bool installRequire) {",
-            "detail::ModuleScope scope(L);",
         ]
     )
     if not require_helper:
@@ -598,10 +592,13 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path)
     if require_helper:
         cpp.append("if (installRequire) { qtluau::installModuleRequire(L); }")
     cpp.append("}")
+    cpp.append("void registerEagerModules(lua_State *L) {")
+    cpp.extend(module_symbol(module) + "(L);" for module in modules if module not in required_modules)
+    cpp.append("}")
     write(module_dir / "aggregate.cpp", "\n".join([*cpp, "}"]) + "\n")
     cpp = ["#include <QCoreApplication>", *file_prefix]
     for function, selected in (
-        ("definitionFiles", {"": definition_paths[""]}),
+        ("definitionFiles", {**{f"{index:06d}": filename for index, filename in enumerate(definition_bundle.preload)}, "zz_public": definition_paths[""]}),
         (
             "moduleFiles",
             {key: value for key, value in definition_paths.items() if key in required_modules},
@@ -624,6 +621,7 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path)
             "bool executeScript(lua_State *L, QAnyStringView source, QString *error) { return qtluau::executeLuau(L, source, error); }"
         )
     cpp.append("}")
+    cpp.insert(-1, f'QString symbolCatalogFile() {{ return QDir(QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral(QTLUAU_DEFINITION_DIRECTORY))).absoluteFilePath(QStringLiteral("{name}_symbols.json")); }}')
     write(module_dir / "definitions.cpp", "\n".join(cpp) + "\n")
     for stale in module_dir.glob("*.cpp"):
         if stale.name not in generated_modules:
@@ -706,27 +704,41 @@ target_include_directories({name} PUBLIC
 target_compile_definitions({name} PUBLIC {" ".join(quote(d) for d in defines)})
 target_link_libraries({name} PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::UiTools Luau.VM ${{_qtluau_luabridge}} {"Luau.Compiler " if execution_helper else ""}Threads::Threads {" ".join(host_targets)})
 """
-    filenames = " ".join(quote(f"module_{i}.d.luau") for i in range(len(modules)))
+    filenames = " ".join(quote(filename) for filename in sorted(expected_definitions))
+    write(output / "copy_definitions.cmake", f"""cmake_minimum_required(VERSION 3.24)
+# Generated definition deployment and stale-output cleanup.
+file(MAKE_DIRECTORY "${{DESTINATION}}")
+set(_expected {filenames})
+file(GLOB _previous "${{DESTINATION}}/{name}_*.d.luau" "${{DESTINATION}}/{name}_symbols*.json")
+foreach(_path IN LISTS _previous)
+  get_filename_component(_file "${{_path}}" NAME)
+  if(NOT _file IN_LIST _expected)
+    file(REMOVE "${{_path}}")
+  endif()
+endforeach()
+foreach(_file IN LISTS _expected)
+  file(COPY_FILE "${{SOURCES}}/${{_file}}" "${{DESTINATION}}/${{_file}}" ONLY_IF_DIFFERENT)
+endforeach()
+""")
     cmake += f"""
 set({name}_DEFINITIONS_DIR {quote(definition_directory)} CACHE STRING "Definition directory relative to the executable, or an absolute path")
 target_compile_definitions({name} PRIVATE "QTLUAU_DEFINITION_DIRECTORY=\\\"${{{name}_DEFINITIONS_DIR}}\\\"")
 set_property(TARGET {name} PROPERTY QTLUAU_DEFINITION_SOURCES "${{CMAKE_CURRENT_SOURCE_DIR}}/definitions")
+set_property(TARGET {name} PROPERTY QTLUAU_DEFINITION_COPY_SCRIPT "${{CMAKE_CURRENT_SOURCE_DIR}}/copy_definitions.cmake")
 function({name}_copy_definitions target)
   if(TARGET {name}_${{target}}_definitions)
     return()
   endif()
   get_target_property(_sources {name} QTLUAU_DEFINITION_SOURCES)
+  get_target_property(_script {name} QTLUAU_DEFINITION_COPY_SCRIPT)
   if(IS_ABSOLUTE "${{{name}_DEFINITIONS_DIR}}")
     set(_destination "${{{name}_DEFINITIONS_DIR}}")
   else()
     set(_destination "$<TARGET_FILE_DIR:${{target}}>/${{{name}_DEFINITIONS_DIR}}")
   endif()
-  add_custom_target({name}_${{target}}_definitions ALL COMMAND "${{CMAKE_COMMAND}}" -E make_directory "${{_destination}}")
-  foreach(_file IN ITEMS {filenames})
-    add_custom_command(TARGET {name}_${{target}}_definitions POST_BUILD
-      COMMAND "${{CMAKE_COMMAND}}" -E copy_if_different "${{_sources}}/${{_file}}" "${{_destination}}/{name}_${{_file}}"
-      VERBATIM)
-  endforeach()
+  add_custom_target({name}_${{target}}_definitions ALL
+    COMMAND "${{CMAKE_COMMAND}}" "-DSOURCES=${{_sources}}" "-DDESTINATION=${{_destination}}" -P "${{_script}}"
+    VERBATIM)
   add_dependencies(${{target}} {name}_${{target}}_definitions)
 endfunction()
 """
@@ -735,16 +747,26 @@ endfunction()
         "name": name,
         "namespace": namespace,
         "modules": definition_paths,
+        "definition_preload": [*definition_bundle.preload, definition_paths[""]],
+        "symbol_catalog": name + "_symbols.json",
+        "definition_dependencies": definition_bundle.dependencies,
+        "definition_bytes": {filename: len(source.encode("utf-8")) for filename, source in {**definition_bundle.sources, **{definition_paths[module]: source for module, source in module_text.items()}}.items()},
         "native_sources": native_sources,
         "native_mode": native_mode,
         "helpers": sorted(helpers),
         "host_targets": host_targets,
         "native_bindings": [entry for entry in metadata if entry.get("binding") == "callbacks"],
     }
+    root_catalog = json.loads(definition_bundle.sources[name + "_symbols.json"])
+    write(output / "module_api_report.json", json.dumps(root_catalog, indent=2, ensure_ascii=False) + "\n")
+    type_sizes = {filename: len(source.encode("utf-8")) for filename, source in definition_bundle.sources.items() if filename.endswith(".d.luau")}
+    write(output / "definition_report.json", json.dumps({"components": len(type_sizes), "preload": definition_bundle.preload, "bytes": type_sizes, "dependencies": definition_bundle.dependencies}, indent=2) + "\n")
+    write(output / "lua_c_api_report.json", json.dumps(lua_c_api_report, indent=2) + "\n")
+    write(output / "exclusion_report.json", json.dumps({"policy": config.get("exclude", {}), "discovery": json.loads((generated / "discovery-report.json").read_text())}, indent=2) + "\n")
     write(output / "manifest.json", json.dumps(manifest, indent=2) + "\n")
     write(
         output / "README.md",
-        f"# {name}\n\nGenerated standalone static CMake library. Link `{name}::Bindings` and include `generated_bindings.hpp`.\n\nCall `registerPublicModule`, `registerModule_qt`, a configured module function, or `registerAllModules`. `definitionFiles()` returns the shared global definition; `moduleFiles()` returns named module type entry paths. Load the shared definition once and let the host resolve module type entry files. Call `{name}_copy_definitions(YourExecutable)` in CMake; configure `{name}_DEFINITIONS_DIR` (default `luaudef`) to change the location. {'`executeScript` compiles and runs Luau source. ' if execution_helper else ''}{'The optional require wrapper is available. ' if require_helper else 'The host owns require. '} Dependencies are Qt 6, Luau and LuaBridge3; override their CMake source paths when relocating.\n",
+        f"# {name}\n\nGenerated standalone static CMake library. Link `{name}::Bindings` and include `generated_bindings.hpp`.\n\nCall `registerPublicModule`, `registerModule_qt`, a configured module function, or `registerAllModules`. `definitionFiles()` returns public components in dependency order; `moduleFiles()` returns require-only module type entry paths. Call `registerEagerModules` at startup and let the host load required modules through `loadRegisteredModule`. Call `{name}_copy_definitions(YourExecutable)` in CMake; configure `{name}_DEFINITIONS_DIR` (default `luaudef`) to change the location. {'`executeScript` compiles and runs Luau source. ' if execution_helper else ''}{'The optional require wrapper is available. ' if require_helper else 'The host owns require. '} Dependencies are Qt 6, Luau and LuaBridge3; override their CMake source paths when relocating.\n",
     )
     # Disposable parser/moc reports are useful in development scan output, but
     # have no role in the library repository delivered to the host.

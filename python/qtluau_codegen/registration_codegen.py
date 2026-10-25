@@ -178,6 +178,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
         '#include "qtluau/widget_wrappers.hpp"',
         '#include "qtluau/value_conversion.hpp"',
         '#include "qtluau/ui_support.hpp"',
+        '#include "qtluau/registration_guard.hpp"',
         "#include <stdexcept>",
         "#include <QtWidgets/QtWidgets>",
         "namespace qtluau { int constructVariant(lua_State *L);",
@@ -214,6 +215,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
         [
             "}",
             "void registerCommonBindings(lua_State *L) {",
+            'RegistrationGuard registration(L, "base.common"); if (!registration) { return; }',
             'if (!L) { throw std::invalid_argument("lua_State is null"); }',
         ]
     )
@@ -265,7 +267,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
         if rejected("QVariant")
         else f'lua_setglobal(L, "{policies["QVariant"]["alias"]}");'
     )
-    common.extend(["}", "}"])
+    common.extend(["registration.complete();", "}", "}"])
     write(out / "static_common.cpp", rename_registration_source(config, "\n".join(common) + "\n"))
 
     code = list(prefix)
@@ -364,7 +366,8 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
     code.extend(
         [
             "}",
-            "void registerQtBindings(lua_State *L) {",
+            "void registerQtValueBindings(lua_State *L) {",
+            'RegistrationGuard registration(L, "base.values"); if (!registration) { return; }',
             'if (!L) { throw std::invalid_argument("lua_State is null"); }',
         ]
     )
@@ -372,8 +375,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
     for name in VALUE_TYPES:
         if not rejected(name):
             code.append(f"register_{name}(L);")
-    code.append("register_QWidget(L);")
-    code.extend(f"register_{name}(L);" for name in names if name != "QWidget")
+
     code.extend(['lua_getglobal(L, "qt");', "const int table = lua_gettop(L);"])
     for name, policy in policies.items():
         if rejected(name):
@@ -392,6 +394,11 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
             ]
         )
     code.extend(['pushNullValue(L); lua_rawsetfield(L, table, "null");'])
+    code.extend(["lua_pop(L, 1);", "registration.complete();", "}",
+                 "void registerQtBindings(lua_State *L) {", 'RegistrationGuard registration(L, "base.widgets"); if (!registration) { return; }', "registerQtValueBindings(L);",
+                 "register_QWidget(L);"])
+    code.extend(f"register_{name}(L);" for name in names if name != "QWidget")
+    code.extend(['lua_getglobal(L, "qt");', "const int table = lua_gettop(L);"])
     for name in names:
         if not visible(name):
             code.append(f'lua_pushnil(L); lua_rawsetfield(L, table, "{name}");')
@@ -407,6 +414,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
         )
     code.extend(
         [
+            "registration.complete();",
             "}",
             f"QStringList allowedUiRoots() {{ return {qt_list(string_list_field(ui, 'allowed_roots'))}; }}",
             "}",
@@ -421,6 +429,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
         f"namespace {namespace} {{",
         "void registerCommonBindings(lua_State *L);",
         "void registerQtBindings(lua_State *L);",
+        "void registerQtValueBindings(lua_State *L);",
         "QStringList allowedUiRoots();",
         "}",
         f"#endif // {guard}",

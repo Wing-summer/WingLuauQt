@@ -107,6 +107,10 @@ WingLuauQt is the framework and CMake project name. The Python distribution is `
 
 Include `cmake/WingLuauQt.cmake` and call `wingluauqt_generate` to create a static library during configuration. See [generated projects](docs/generated-projects.md). Host configuration and forwarding rules stay in the application's codegen directory.
 
+For a configured host driver, `wingluauqt_integrate(TARGET Host CONFIG codegen/generation.json)` also links the generated library, configures registration includes and copies/installs definition files. The JSON supplies `bindings`, build-relative `output`, host-relative `driver`, dependency glob patterns in `dependencies`, and the `cmake.native_sources` and `cmake.registration_includes` maps. `OUTPUT_DIR` and `ROOT` are optional overrides; no host implementation is embedded in the framework.
+
+已有宿主驱动时可使用 `wingluauqt_integrate`，由 JSON 配置驱动、依赖目录、注册 include 和生成路径，通用函数负责链接及定义部署。`OUTPUT_DIR`、`ROOT` 可临时覆盖配置，框架不包含宿主原生实现。
+
 作为子模块使用时包含上述 CMake 模块，无需编译框架开发库；宿主配置、生成输出路径和回调规则均由宿主 codegen 维护。语言服务器只加载一次公共定义，命名模块通过真实文件路径解析。与宿主使用相同的 Luau 版本；原生 int64 支持取决于宿主 Luau 扩展，标准 Luau 使用 number 的精确表示范围。
 
 Optional SDK groups select root classes in `config/framework-bindings.json`; members and signature dependencies are scanned. An instance provider such as `QGuiApplication::clipboard` exposes the discovered methods as static `qt.QClipboard` functions, including image/pixmap access. No separate clipboard module is registered.

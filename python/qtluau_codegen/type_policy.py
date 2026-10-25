@@ -36,11 +36,14 @@ def common_types(config: JsonObject) -> dict[str, CommonTypePolicy]:
         if not isinstance(entry, dict):
             raise ValueError(f"invalid common.types.{name} policy")
         policy = cast(JsonObject, entry)
-        if set(policy) - {"alias", "enabled", "methods"}:
+        if set(policy) - {"alias", "enabled", "methods", "metamethods"}:
             raise ValueError(f"invalid common.types.{name} policy")
         raw.setdefault(
             name, {"alias": name, "enabled": True, "methods": ["*"], "kind": "qt"}
         ).update(policy)
+        for key, target in object_field(policy, "metamethods").items():
+            if not re.fullmatch(r"__[a-z_]+", key) or not isinstance(target, str):
+                raise ValueError(f"invalid common.types.{name}.metamethods entry")
     result: dict[str, CommonTypePolicy] = {}
     aliases: set[str] = set()
     for name, policy in raw.items():

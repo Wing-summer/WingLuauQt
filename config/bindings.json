@@ -6,7 +6,10 @@
         "enabled": true,
         "methods": [
           "*"
-        ]
+        ],
+        "metamethods": {
+          "__tostring": "toStdString"
+        }
       },
       "QByteArray": {
         "alias": "bytearray",

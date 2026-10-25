@@ -29,6 +29,15 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "metamethods": {
+                "type": "object",
+                "propertyNames": {
+                  "pattern": "^__[a-z_]+$"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "additionalProperties": false

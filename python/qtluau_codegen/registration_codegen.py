@@ -210,6 +210,15 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
                 native_groups.setdefault(method["name"], []).append(value_method.lambda_code(cpp))
         for method_name, overloads in native_groups.items():
             common.append(f'cls.addFunction("{method_name}", ' + ", ".join(overloads) + ");")
+        type_config = object_field(object_field(object_field(config, "common"), "types"), name)
+        for metamethod, target in object_field(type_config, "metamethods").items():
+            candidates = [method for method in COMMON_NATIVE_METHODS[name]
+                          if method.native["name"] == target and not method.arguments
+                          and method_enabled(name, method.native["name"])
+                          and not excluded_method(members, name, method.native["name"], method.native["args"])]
+            if len(candidates) != 1 or candidates[0].result[1] != "string":
+                raise ValueError(f"Metamethod {name}.{metamethod} needs one scanned string conversion")
+            common.append(f'cls.addFunction("{metamethod}", {candidates[0].lambda_code(cpp)});')
         common.extend(["guardClassMethods(L, cls);", "cls.endClass();", "}"])
     common.extend(
         [

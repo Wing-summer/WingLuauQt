@@ -22,7 +22,7 @@ def emit_symbol_catalog(
     module_types: dict[str, list[str]] | None = None,
 ) -> None:
     """Write a small module directory and lazily readable direct-member pages."""
-    pending: dict[str, tuple[str, str, bool, tuple[str, ...]]] = {}
+    pending: dict[str, tuple[str, str, str | None, tuple[str, ...]]] = {}
     roots: list[JsonObject] = []
 
     def shape(source: str, seen: set[str] | None = None) -> str:
@@ -63,13 +63,17 @@ def emit_symbol_catalog(
         kind = ("class" if member_shape or (name.startswith("Q") and instance in types) else "module" if is_table else
                 "function" if "->" in resolved else "constant")
         detail = f"{name}: {{ ... }}" if has_children else f"{name}: {source}"
-        item: JsonObject = {"id": identity, "label": name, "kind": kind,
+        item: JsonObject = {"id": identity, "label": name, "kind": kind, "module_root": root,
                             "detail": detail.splitlines()[0], "declaration": detail if is_table else name + ": " + source}
+        if kind == "function":
+            signatures = table_fields(resolved, "&")
+            if len(signatures) > 1:
+                item["overloads"] = [name + ": " + signature for signature in signatures]
         fingerprint = resolved + "\n" + member_shape
         if has_children and fingerprint not in ancestors:
             filename = prefix + "_symbols_" + hashlib.sha256(identity.encode()).hexdigest()[:16] + ".json"
             item["members"] = filename
-            pending[identity] = (resolved, member_shape, constructor, (*ancestors, fingerprint))
+            pending[identity] = (resolved, member_shape, name if root else None, (*ancestors, fingerprint))
         return item
 
     for name, body in sorted(values.items()):
@@ -87,7 +91,7 @@ def emit_symbol_catalog(
             roots.append(root)
     while pending:
         identity = next(iter(pending))
-        resolved, instance, _, ancestors = pending.pop(identity)
+        resolved, instance, module, ancestors = pending.pop(identity)
         members: dict[str, str] = {}
         for body in (instance, resolved):
             if body.startswith("{") and body.endswith("}"):
@@ -97,8 +101,8 @@ def emit_symbol_catalog(
                         members[match[1]] = match[2]
         children = [node(name, body, identity + "/" + name, False, ancestors)
                     for name, body in sorted(members.items())]
-        if identity.startswith("module:") and module_types:
-            for name in sorted(module_types.get(identity.removeprefix("module:"), [])):
+        if module is not None and module_types:
+            for name in sorted(module_types.get(module, [])):
                 child = node(name, name, identity + "/type:" + name, False, ancestors)
                 child["kind"] = "interface"
                 child["detail"] = "type " + name

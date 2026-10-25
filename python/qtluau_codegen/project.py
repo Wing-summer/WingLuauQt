@@ -13,6 +13,7 @@ import pathlib
 import re
 import shutil
 import sys
+from collections.abc import Callable
 
 from .assets import support_root
 from .callback_bindings import emit_callbacks
@@ -29,6 +30,7 @@ from .models import JsonObject, object_field, object_list_field, string_list_fie
 from .module_definitions import module_definitions
 from .module_policy import requires_module
 from .native_apis import emit_native_apis
+from .project_output import project_output
 from .qt_pipeline import emit
 from .sdk_version import validate_version
 
@@ -200,7 +202,60 @@ def restore_unchanged_outputs(previous: dict[pathlib.Path, tuple[bytes, int, int
             os.utime(path, ns=(accessed, modified))
 
 
-def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path) -> JsonObject:
+def validate_output(config: JsonObject, output: pathlib.Path, base: pathlib.Path) -> None:
+    """Reject output paths overlapping maintained framework or host inputs."""
+    root = support_root()
+    output = output.resolve()
+    source_root = base.resolve()
+    maintained_roots = (
+        root / directory
+        for directory in (
+            "python",
+            "include",
+            "support",
+            "cmake",
+            "config",
+            "examples",
+            "tests",
+            "docs",
+        )
+    )
+    if (
+        root.is_relative_to(output)
+        or source_root.is_relative_to(output)
+        or any(output.is_relative_to(directory) for directory in maintained_roots)
+    ):
+        raise ValueError("Output must be separate from framework and native source roots")
+    for group, fields in (
+        ("extensions", ("headers", "sources")),
+        ("native_apis", ("headers",)),
+        ("extra_bindings", ("files", "definitions")),
+    ):
+        for entry in object_list_field(config, group):
+            for field in fields:
+                for pattern in string_list_field(entry, field):
+                    if not pattern.startswith("@qtluau/"):
+                        if any(
+                            path.is_file() and path.is_relative_to(output)
+                            for path in paths(base, [pattern])
+                        ):
+                            raise ValueError(
+                                "Output must not contain maintained native input files"
+                            )
+
+
+def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path,
+                   postprocess: Callable[[JsonObject, pathlib.Path], None] | None = None) -> JsonObject:
+    """Publish one complete project, optionally applying a host generation step."""
+    validate_output(config, output, base)
+    with project_output(output) as staging:
+        manifest = _export_project(config, staging, base)
+        if postprocess is not None:
+            postprocess(manifest, staging)
+    return manifest
+
+
+def _export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path) -> JsonObject:
     """Export a static library from validated policy and host-relative inputs.
 
     Args:
@@ -245,42 +300,7 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path)
     name = cpp_name(policy.get("name", "GeneratedBindings"))
     namespace = cpp_name(policy.get("namespace", "generated_bindings"))
     output = output.resolve()
-    source_root = base.resolve()
-    maintained_roots = (
-        root / directory
-        for directory in (
-            "python",
-            "include",
-            "support",
-            "cmake",
-            "config",
-            "examples",
-            "tests",
-            "docs",
-        )
-    )
-    if (
-        root.is_relative_to(output)
-        or source_root.is_relative_to(output)
-        or any(output.is_relative_to(directory) for directory in maintained_roots)
-    ):
-        raise ValueError("Output must be separate from framework and native source roots")
-    for group, fields in (
-        ("extensions", ("headers", "sources")),
-        ("native_apis", ("headers",)),
-        ("extra_bindings", ("files", "definitions")),
-    ):
-        for entry in object_list_field(config, group):
-            for field in fields:
-                for pattern in string_list_field(entry, field):
-                    if not pattern.startswith("@qtluau/"):
-                        if any(
-                            path.is_file() and path.is_relative_to(output)
-                            for path in paths(base, [pattern])
-                        ):
-                            raise ValueError(
-                                "Output must not contain maintained native input files"
-                            )
+    validate_output(config, output, base)
     previous_outputs = snapshot_outputs(output)
     output.mkdir(parents=True, exist_ok=True)
     shutil.copy2(root / "LICENSE", output / "LICENSE")

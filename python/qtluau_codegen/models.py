@@ -69,6 +69,8 @@ class NativeClass(TypedDict):
     """Describe a discovered Qt class and its binding dependencies."""
     #: Public constructor argument prefixes, including default-argument arities.
     constructors: NotRequired[list[list[str]]]
+    #: Public using declarations that restore hidden base overloads.
+    using_methods: NotRequired[list[str]]
     #: Whether the native class permits copying.
     copyable: NotRequired[bool]
     #: Public data fields discovered from the native declaration.

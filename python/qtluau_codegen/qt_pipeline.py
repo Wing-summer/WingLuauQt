@@ -83,6 +83,7 @@ def emit(
         )
     common_types(config)
     resolved, classes, flags, report = resolve(config)
+    NATIVE_CLASSES.clear()
     NATIVE_CLASSES.update(classes)
     out.mkdir(parents=True, exist_ok=True)
     # Obsolete dynamic registration inputs must not survive incremental generation.

@@ -800,6 +800,18 @@ endfunction()
     write(output / "module_api_report.json", json.dumps(root_catalog, indent=2, ensure_ascii=False) + "\n")
     type_sizes = {filename: len(source.encode("utf-8")) for filename, source in definition_bundle.sources.items() if filename.endswith(".d.luau")}
     write(output / "definition_report.json", json.dumps({"components": len(type_sizes), "preload": definition_bundle.preload, "bytes": type_sizes, "dependencies": definition_bundle.dependencies}, indent=2) + "\n")
+    sdk_modules = object_field(config, "_sdk_module_types")
+    public_sdk = set(string_list_field(config, "_sdk_public_types"))
+    dependency_report: JsonObject = {
+        "qt_components": qt_components,
+        "public_sdk_types": sorted(public_sdk),
+        "modules": {module: {
+            "require": module in required_modules,
+            "sdk_types": string_list_field(sdk_modules, module),
+            "shared_with_public": sorted(public_sdk.intersection(string_list_field(sdk_modules, module))),
+        } for module in modules},
+    }
+    write(output / "module_dependencies.json", json.dumps(dependency_report, indent=2) + "\n")
     write(output / "lua_c_api_report.json", json.dumps(lua_c_api_report, indent=2) + "\n")
     write(output / "exclusion_report.json", json.dumps({"policy": config.get("exclude", {}), "discovery": json.loads((generated / "discovery-report.json").read_text())}, indent=2) + "\n")
     write(output / "manifest.json", json.dumps(manifest, indent=2) + "\n")

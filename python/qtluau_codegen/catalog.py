@@ -106,7 +106,7 @@ _defaults: JsonObject = json.loads((_root / "config/bindings.json").read_text())
 _wrapper_methods = wrapper_methods()
 _native, _flags = scan(["QtCore", "QtGui", "QtWidgets"])
 # Shared SDK records for optional generated value binding surfaces.
-NATIVE_CLASSES = _native
+NATIVE_CLASSES = dict(_native)
 _generic_methods = _wrapper_methods["QtWidgetRef"]
 _default_blacklist = string_list_field(
     object_field(object_field(_defaults, "qt"), "discovery"), "blacklist"

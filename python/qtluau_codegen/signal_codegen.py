@@ -29,11 +29,16 @@ def signal_connector(generator: SdkBindings, native: str) -> tuple[list[str], li
             continue
         seen.add(key)
         owner = method["owner"]
-        conversions = [generator.conversion(spelling, owner, True) for spelling in method["args"]]
+        private_tag = bool(method["args"] and method["args"][-1].rsplit("::", 1)[-1] == "QPrivateSignal")
+        payload = method["args"][:-1] if private_tag else method["args"]
+        if private_tag and sum(other["name"] == method["name"] for other in generator.methods(native)) > 1:
+            generator.rejected.append({"class": native, "method": method["name"], "reason": "ambiguous private signal tag", "kind": "signal"})
+            continue
+        conversions = [generator.conversion(spelling, owner, True) for spelling in payload]
         captures: list[str] = []
         values: list[str] = []
         supported = True
-        for index, (spelling, converted) in enumerate(zip(method["args"], conversions)):
+        for index, (spelling, converted) in enumerate(zip(payload, conversions)):
             if converted is None or ("&" in spelling and not spelling.startswith("const ")):
                 supported = False
                 break
@@ -53,7 +58,11 @@ def signal_connector(generator: SdkBindings, native: str) -> tuple[list[str], li
                                        "reason": "unsupported signal snapshot", "kind": "signal"})
             continue
         pointer = f"static_cast<void ({owner}::*)({', '.join(method['args'])})>(&{owner}::{method['name']})"
-        params = ", ".join(f"{spelling} arg{index}" for index, spelling in enumerate(method["args"]))
+        if private_tag:
+            pointer = f"&{owner}::{method['name']}"
+        params = ", ".join(f"{spelling} arg{index}" for index, spelling in enumerate(payload))
+        if private_tag:
+            params += (", " if params else "") + "auto &&..."
         code.extend([
             f"if (signature == QMetaMethod::fromSignal({pointer}).methodSignature()) {{",
             f"connectQueuedSignal(sender, {pointer}, callback, []({params}) -> LuaSignalArguments {{",

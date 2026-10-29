@@ -60,6 +60,7 @@ struct VmResources {
     LuaContextResolver resolver = nullptr;
     std::unordered_map<const QMetaObject *, SignalConnector> connectors;
     std::vector<ContextObject> objects;
+    std::unordered_map<lua_State *, const void *> callbackContexts;
 };
 struct CallbackResources {
     std::unordered_map<lua_State *, VmResources> vms;
@@ -69,7 +70,12 @@ const void *contextKey(lua_State *L) {
     LuaContextResolver resolver = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_callbackMutex);
-        resolver = resources->vms[lua_mainthread(L)].resolver;
+        const auto &vm = resources->vms[lua_mainthread(L)];
+        const auto context = vm.callbackContexts.find(L);
+        if (context != vm.callbackContexts.end()) {
+            return context->second;
+        }
+        resolver = vm.resolver;
     }
     return resolver ? resolver(L) : L;
 }
@@ -120,6 +126,10 @@ void clearLuaContext(lua_State *L) {
     if (!L) {
         return;
     }
+    if (resources.isDestroyed()) {
+        clearLuaCallbacks(L);
+        return;
+    }
     const void *context = contextKey(L);
     std::vector<std::shared_ptr<LuaCallbackSlot>> callbacksToReset;
     std::vector<QPointer<QObject>> objects;
@@ -160,36 +170,74 @@ QueuedLuaCallback makeQueuedLuaCallback(QObject *sender,
     auto slot = trackCallback(callback);
     auto *receiver = new QObject(sender);
     slot->receiver = receiver;
-    return {receiver, [slot](LuaSignalArguments encode) {
-                std::lock_guard<std::mutex> lock(slot->deliveryMutex);
-                if (!slot->active || !slot->receiver) {
-                    return;
-                }
-                QTimer::singleShot(
-                    0, slot->receiver, [slot, encode = std::move(encode)] {
-                        if (!slot->callback) {
-                            return;
+    return {
+        receiver, [slot](LuaSignalArguments encode) {
+            std::lock_guard<std::mutex> lock(slot->deliveryMutex);
+            if (!slot->active || !slot->receiver) {
+                return;
+            }
+            QTimer::singleShot(
+                0, slot->receiver, [slot, encode = std::move(encode)] {
+                    if (!slot->callback) {
+                        return;
+                    }
+                    auto *owner = slot->callback->state();
+                    auto *main = lua_mainthread(owner);
+                    lua_State *execution = nullptr;
+                    std::optional<luabridge::LuaRef> keepAlive;
+                    try {
+                        // A signal can arrive while its source coroutine is
+                        // yielded. Pin a separate invocation thread without
+                        // changing that stack.
+                        {
+                            const luabridge::StackRestore restoreOwner(owner);
+                            const luabridge::StackRestore restoreMain(main);
+                            execution = lua_newthread(owner);
+                            if (owner != main) {
+                                lua_xmove(owner, main, 1);
+                            }
+                            keepAlive.emplace(
+                                luabridge::LuaRef::fromStack(main, -1));
                         }
-                        auto *L = slot->callback->state();
-                        const int top = lua_gettop(L);
-                        try {
-                            auto args = encode(L);
-                            slot->callback->push(L);
-                            for (const auto &arg : args) {
-                                arg.push(L);
-                            }
-                            if (lua_pcall(L, static_cast<int>(args.size()), 0,
-                                          0) != LUA_OK) {
-                                qWarning() << "Lua signal callback failed:"
-                                           << lua_tostring(L, -1);
-                            }
-                        } catch (const std::exception &error) {
+                        if (!lua_getthreaddata(execution)) {
+                            lua_setthreaddata(execution,
+                                              lua_getthreaddata(owner));
+                        }
+                        {
+                            std::lock_guard<std::mutex> lock(g_callbackMutex);
+                            resources->vms[main].callbackContexts[execution] =
+                                slot->context;
+                        }
+                        auto args = encode(execution);
+                        slot->callback->push(execution);
+                        for (const auto &arg : args) {
+                            arg.push(execution);
+                        }
+                        const int status = lua_pcall(
+                            execution, static_cast<int>(args.size()), 0, 0);
+                        if (status != LUA_OK) {
                             qWarning() << "Lua signal callback failed:"
-                                       << error.what();
+                                       << (status == LUA_YIELD
+                                               ? "Signal callbacks cannot yield"
+                                               : lua_tostring(execution, -1));
                         }
-                        lua_settop(L, top);
-                    });
-            }};
+                    } catch (const std::exception &error) {
+                        qWarning()
+                            << "Lua signal callback failed:" << error.what();
+                    }
+                    if (execution && keepAlive) {
+                        lua_resetthread(execution);
+                        std::lock_guard<std::mutex> lock(g_callbackMutex);
+                        if (!resources.isDestroyed()) {
+                            const auto vm = resources->vms.find(main);
+                            if (vm != resources->vms.end()) {
+                                vm->second.callbackContexts.erase(execution);
+                            }
+                        }
+                    }
+                    keepAlive.reset();
+                });
+        }};
 }
 std::function<void()> makeLuaCallback(luabridge::LuaRef callback) {
     if (!callback.isFunction()) {
@@ -322,9 +370,9 @@ void connectLuaSignal(QObject *sender, QAnyStringView signal,
             return;
         }
     }
-    if (selected.parameterCount() && !connectors.empty()) {
+    if (!connectors.empty()) {
         throw std::invalid_argument(
-            "Qt signal parameters have no safe generated conversion");
+            "Qt signal has no safe generated conversion");
     }
     auto invoke = makeLuaCallback(std::move(callback));
     auto *receiver = new SignalReceiver(sender);
@@ -368,10 +416,12 @@ void clearLuaCallbacks(lua_State *L) {
     std::vector<ContextObject> objects;
     {
         std::lock_guard<std::mutex> lock(g_callbackMutex);
-        const auto found = resources->vms.find(lua_mainthread(L));
-        if (found != resources->vms.end()) {
-            objects = std::move(found->second.objects);
-            resources->vms.erase(found);
+        if (!resources.isDestroyed()) {
+            const auto found = resources->vms.find(lua_mainthread(L));
+            if (found != resources->vms.end()) {
+                objects = std::move(found->second.objects);
+                resources->vms.erase(found);
+            }
         }
     }
     for (const auto &entry : objects) {

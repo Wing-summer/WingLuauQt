@@ -13,7 +13,7 @@ import re
 import shlex
 import shutil
 import subprocess
-from typing import cast
+from typing import NamedTuple, cast
 
 from .models import NativeClass, NativeMethod
 
@@ -25,6 +25,22 @@ SDK_FLAGS: dict[str, str] = {}
 SDK_CONTAINER_ALIASES: dict[str, str] = {}
 #: Native free functions discovered alongside SDK classes.
 SDK_FUNCTIONS: list[NativeMethod] = []
+
+
+class SdkSnapshot(NamedTuple):
+    """Cache one component set without leaking metadata into later exports."""
+    #: Native class declarations.
+    classes: dict[str, NativeClass]
+    #: Compiler include flags.
+    flags: list[str]
+    #: Native enum values.
+    enums: dict[str, dict[str, int]]
+    #: Flag aliases.
+    flag_types: dict[str, str]
+    #: Container aliases.
+    containers: dict[str, str]
+    #: Free functions.
+    functions: list[NativeMethod]
 
 
 def command(args: list[str]) -> str:
@@ -65,11 +81,19 @@ def discover_sdk(modules: list[str]) -> list[str]:
 
 def scan(modules: list[str]) -> tuple[dict[str, NativeClass], list[str]]:
     """Return SDK records cached within this generation process."""
-    return _scan(tuple(modules))
+    snapshot = _scan(tuple(modules))
+    SDK_ENUMS.clear()
+    SDK_ENUMS.update({name: dict(values) for name, values in snapshot.enums.items()})
+    SDK_FLAGS.clear()
+    SDK_FLAGS.update(snapshot.flag_types)
+    SDK_CONTAINER_ALIASES.clear()
+    SDK_CONTAINER_ALIASES.update(snapshot.containers)
+    SDK_FUNCTIONS[:] = snapshot.functions
+    return snapshot.classes, snapshot.flags
 
 
 @functools.cache
-def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
+def _scan(modules: tuple[str, ...]) -> SdkSnapshot:
     """Use tsujikiri IR and retain public constructor default-argument arities."""
     import tempfile
 
@@ -79,6 +103,10 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
 
     from .member_scan import Clang
 
+    SDK_ENUMS.clear()
+    SDK_FLAGS.clear()
+    SDK_CONTAINER_ALIASES.clear()
+    SDK_FUNCTIONS.clear()
     flags = discover_sdk(list(modules))
     if shutil.which("clang++"):
         flags.append("-resource-dir=" + command(["clang++", "-print-resource-dir"]))
@@ -105,6 +133,7 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
                 if re.match(r"Q(?:List|Vector|Map|Hash)<", canonical):
                     SDK_CONTAINER_ALIASES[cursor.spelling] = canonical
         signals: set[tuple[str, str]] = set()
+        using_methods: dict[str, list[str]] = {}
         deleted: dict[str, set[tuple[str, ...]]] = {}
         noncopyable: set[str] = set()
         constructor_cursors = (
@@ -118,6 +147,10 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
             for child in record.get_children()
         )
         for cursor in constructor_cursors:
+            if cursor.kind.name == "USING_DECLARATION" and cursor.access_specifier.name == "PUBLIC":
+                parent = cursor.semantic_parent
+                if parent is not None:
+                    using_methods.setdefault(parent.spelling, []).append(cursor.spelling)
             if cursor.kind.name == "CXX_METHOD" and any(
                 child.kind.name == "ANNOTATE_ATTR" and child.spelling == "qt_signal"
                 for child in cursor.get_children()
@@ -244,6 +277,7 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
                 constructors.append([p.type_spelling for p in ctor.parameters[:count]])
         classes[name] = {
             "constructors": constructors,
+            "using_methods": using_methods.get(name, []),
             "copyable": not record.has_deleted_copy_constructor and name not in noncopyable,
             "fields": [
                 {
@@ -265,4 +299,5 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
             "dependencies": sorted(dependencies),
             "methods": methods,
         }
-    return classes, flags
+    return SdkSnapshot(classes, flags, {name: dict(values) for name, values in SDK_ENUMS.items()},
+                       dict(SDK_FLAGS), dict(SDK_CONTAINER_ALIASES), list(SDK_FUNCTIONS))

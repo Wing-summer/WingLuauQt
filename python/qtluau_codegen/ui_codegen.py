@@ -21,7 +21,9 @@ def emit_ui_loader(config: JsonObject, output: Path, widgets: list[str]) -> None
     Root class names are selection policy. Native central-widget operations and
     supported layouts are discovered, rather than maintained as C++ type lists.
     """
-    classes, _ = scan(["QtCore", "QtGui", "QtWidgets"])
+    classes, _ = scan(string_list_field(
+        object_field(object_field(config, "qt"), "discovery"), "modules",
+        ["QtCore", "QtGui", "QtWidgets"]))
     defaults: JsonObject = json.loads((support_root() / "config/bindings.json").read_text())
     default_ui = object_field(object_field(defaults, "qt"), "ui_tools")
     ui = object_field(object_field(config, "qt"), "ui_tools")

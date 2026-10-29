@@ -107,5 +107,12 @@
   },
   "naming": {
     "functions": "snake_case"
+  },
+  "exclude": {
+    "members": [
+      "*::writeDatagram(const char*,qint64,const QHostAddress&,quint16)",
+      "*::write(const char*,qint64)",
+      "*::write(const char*)"
+    ]
   }
 }

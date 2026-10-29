@@ -10,12 +10,30 @@ import unittest
 
 from qtluau_codegen.catalog import NATIVE_CLASSES
 from qtluau_codegen.discovery import SDK_ENUMS
-from qtluau_codegen.framework_bindings import emit_framework_bindings
+from qtluau_codegen.framework_bindings import SdkBindings, emit_framework_bindings
 from qtluau_codegen.models import JsonObject, NativeClass, NativeMethod
 
 
 class SignalCodegenTests(unittest.TestCase):
     """Exercise generic facilities without maintaining a native socket API list."""
+
+    def test_public_using_keeps_base_overloads(self) -> None:
+        """Retain C++ using declarations while preserving normal name hiding."""
+        base: NativeMethod = {"owner": "QUsingBase", "name": "bind", "result": "bool",
+            "args": ["int"], "const": False, "static": False, "variadic": False, "deprecated": False}
+        derived: NativeMethod = {**base, "owner": "QUsingChild", "args": ["bool"]}
+        NATIVE_CLASSES["QUsingBase"] = {"source": "fixture.h", "bases": ["QObject"], "methods": [base],
+            "abstract": False, "default_ctor": False, "dependencies": []}
+        NATIVE_CLASSES["QUsingChild"] = {"source": "fixture.h", "bases": ["QUsingBase"], "methods": [derived],
+            "using_methods": ["bind"], "abstract": False, "default_ctor": False, "dependencies": []}
+        try:
+            generator = SdkBindings({"sdk_bindings": {"class_adapters": {"QUsingChild": {"inherited_methods": True}}}})
+            self.assertEqual([method["args"] for method in generator.methods("QUsingChild")], [["bool"], ["int"]])
+            NATIVE_CLASSES["QUsingChild"]["using_methods"] = []
+            self.assertEqual([method["args"] for method in generator.methods("QUsingChild")], [["bool"]])
+        finally:
+            del NATIVE_CLASSES["QUsingBase"]
+            del NATIVE_CLASSES["QUsingChild"]
 
     def test_enum_constructor_precedes_integer(self) -> None:
         """Disambiguate enum constants without consuming arbitrary integer values."""
@@ -46,7 +64,7 @@ class SignalCodegenTests(unittest.TestCase):
             "dependencies": []}
         payload: NativeMethod = {**changed, "name": "payload", "signal": False, "args": [], "result": "QFixtureValue"}
         fixture: NativeClass = {"source": "/sdk/QtExtra/qfixture.h", "bases": ["QObject"],
-            "methods": [changed, payload],
+            "methods": [changed, payload, {**changed, "name": "pendingAvailable", "args": ["QPrivateSignal"]}],
             "abstract": False, "default_ctor": True, "constructors": [[]], "dependencies": []}
         NATIVE_CLASSES["QSignalFixture"] = fixture
         NATIVE_CLASSES["QFixtureValue"] = value
@@ -63,6 +81,9 @@ class SignalCodegenTests(unittest.TestCase):
                 _, definitions = emit_framework_bindings(config, output)
                 code = (output / "custom/sdk_QSignalFixture.cpp").read_text()
                 self.assertIn("connectQueuedSignal", code)
+                self.assertIn("&QSignalFixture::pendingAvailable", code)
+                self.assertIn("[](auto &&...)", code)
+                self.assertIn('signal: "pending_available", callback: () -> ()', definitions[""])
                 self.assertIn("value0 = arg0", code)
                 self.assertIn("value1 = arg1", code)
                 self.assertNotIn('addFunction("valueChanged"', code)

@@ -96,7 +96,7 @@ class SdkBindings:
             for base in record["bases"]:
                 if base != "QObject":
                     result.extend(method for method in self.methods(base, seen)
-                                  if method["name"] not in own)
+                                  if method["name"] not in own or method["name"] in record.get("using_methods", []))
         return result
 
     def object_type(self, native: str, seen: set[str] | None = None) -> bool:
@@ -205,9 +205,9 @@ class SdkBindings:
             )
         enum = self.enum_type(bare, owner)
         if enum:
-            return Conversion(
-                f"QtArgument<{enum}>", "number", "{expr}.value", "static_cast<int>({expr})"
-            )
+            domain = sorted(set(SDK_ENUMS[enum].values())) if not result else []
+            cpp = f"QtArgument<{enum}" + (", " + ", ".join(str(value) for value in domain) if domain else "") + ">"
+            return Conversion(cpp, "number", "{expr}.value", "static_cast<int>({expr})")
         views = {
             "QStringView": "QString",
             "QAnyStringView": "QString",
@@ -653,7 +653,9 @@ class SdkBindings:
         if constructors:
             code.append("cls.addConstructor(" + ", ".join(constructors) + ");")
         methods: dict[tuple[str, bool], dict[str, tuple[str, str]]] = {}
-        for method in self.methods(native):
+        for method in sorted(self.methods(native),
+                key=lambda method: -sum(self.enum_type(re.sub(r"\bconst\b|[&]", "", kind).strip(), native) is not None
+                                        for kind in method["args"])):
             if method.get("signal") or not self.method_allowed(native, method) or (static_only and not method["static"]):
                 continue
             overloads = self.method(native, method, provider)
@@ -757,6 +759,10 @@ def emit_framework_bindings(
     selected = string_list_field(config, "framework_bindings")
     configured_modules = object_field(object_field(config, "sdk_bindings"), "modules")
     if not selected and not configured_modules:
+        for key in ("_sdk_types", "_sdk_public_types", "_sdk_module_types"):
+            config.pop(key, None)
+        for stale in (output / "custom").glob("sdk_*.cpp"):
+            stale.unlink()
         return [], {}
     policy: JsonObject = json.loads((support_root() / "config/framework-bindings.json").read_text())
     groups = object_field(policy, "groups")
@@ -880,6 +886,8 @@ def emit_framework_bindings(
         public_classes.add(native)
         pending.extend(generator.dependencies(native, bool(roots.get(native, {}).get("static_only", False))))
     config["_sdk_public_types"] = sorted(public_classes)
+    module_types: dict[str, list[str]] = {"": sorted(public_classes), qt_module: sorted(generator.classes)}
+    config["_sdk_module_types"] = module_types
     source = [
         '#include "qtluau/packages.hpp"', '#include "qtluau/object_ref.hpp"',
         *[f"#include <{name}>" for name in sorted(generator.classes | {owner for owner, _ in providers.values()})],
@@ -1016,6 +1024,7 @@ def emit_framework_bindings(
                 continue
             closure.add(native)
             pending.extend(generator.dependencies(native))
+        module_types[module] = sorted(closure)
         source.extend(f"register_sdk_{native}(L);" for native in sorted(closure - public_classes))
         source.extend(f"registerEnums_{owner}(L);" for owner in namespace_rules
                       if text(object_field(namespace_rules, owner), "module") == module)

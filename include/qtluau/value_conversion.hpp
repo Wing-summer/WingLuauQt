@@ -178,57 +178,71 @@ template <> struct LuaCodec<QByteArray> {
   static luabridge::LuaRef write(lua_State *L, const QByteArray &value);
 };
 template <class T> struct LuaCodec<QList<T>> {
-  static QList<T> read(const luabridge::LuaRef &value) {
-    // Validate shape/cycles before walking typed elements. A list has dense,
-    // one-based integer keys; a map or a sparse/mixed table is not a list.
-    QVariant shape = variantFromLua(value);
-    if (shape.metaType().id() != QMetaType::QVariantList) {
-      throw std::invalid_argument("Expected dense sequence table");
+    static QList<T> read(const luabridge::LuaRef &value) {
+        if (!value.isTable()) {
+            throw std::invalid_argument("Expected dense sequence table");
+        }
+        const int size = value.length();
+        int count = 0;
+        for (luabridge::Iterator it(value); !it.isNil(); ++it) {
+            const auto key = it.key();
+            if (!key.isNumber()) {
+                throw std::invalid_argument("Expected dense sequence table");
+            }
+            const auto index = key.template unsafe_cast<double>();
+            if (!std::isfinite(index) || std::floor(index) != index ||
+                index < 1 || index > size) {
+                throw std::invalid_argument("Expected dense sequence table");
+            }
+            ++count;
+        }
+        if (count != size) {
+            throw std::invalid_argument("Expected dense sequence table");
+        }
+        QList<T> result;
+        for (int i = 1; i <= size; ++i) {
+            result.append(LuaCodec<T>::read(value[i]));
+        }
+        return result;
     }
-    QList<T> result;
-    const qsizetype size = shape.toList().size();
-    for (qsizetype i = 1; i <= size; ++i) {
-      result.append(LuaCodec<T>::read(value[static_cast<int>(i)]));
+    static luabridge::LuaRef write(lua_State *L, const QList<T> &value) {
+        auto result = luabridge::LuaRef::newTable(L);
+        int index = 1;
+        for (const T &entry : value) {
+            result[index++] = LuaCodec<T>::write(L, entry);
+        }
+        return result;
     }
-    return result;
-  }
-  static luabridge::LuaRef write(lua_State *L, const QList<T> &value) {
-    auto result = luabridge::LuaRef::newTable(L);
-    int index = 1;
-    for (const T &entry : value) {
-      result[index++] = LuaCodec<T>::write(L, entry);
-    }
-    return result;
-  }
 };
-template <class T> struct LuaCodec<QMap<QString, T>> {
-  static QMap<QString, T> read(const luabridge::LuaRef &value) {
-    QVariant shape = variantFromLua(value);
-    QMap<QString, T> result;
-    if (shape.metaType().id() == QMetaType::QVariantList &&
-        shape.toList().isEmpty()) {
-      return result;
+template <class T>
+struct LuaCodec<QMap<QString, T>> {
+    static QMap<QString, T> read(const luabridge::LuaRef &value) {
+        if (!value.isTable()) {
+            throw std::invalid_argument("Expected string-keyed map table");
+        }
+        QMap<QString, T> result;
+        for (luabridge::Iterator it(value); !it.isNil(); ++it) {
+            const auto key = it.key();
+            if (!key.isString()) {
+                throw std::invalid_argument("Expected string-keyed map table");
+            }
+            const auto text = key.template unsafe_cast<std::string>();
+            result.insert(QString::fromUtf8(
+                              text.data(), static_cast<qsizetype>(text.size())),
+                          LuaCodec<T>::read(it.value()));
+        }
+        return result;
     }
-    if (shape.metaType().id() != QMetaType::QVariantMap) {
-      throw std::invalid_argument("Expected string-keyed map table");
+    static luabridge::LuaRef write(lua_State *L,
+                                   const QMap<QString, T> &value) {
+        auto result = luabridge::LuaRef::newTable(L);
+        for (auto it = value.begin(); it != value.end(); ++it) {
+            const QByteArray key = it.key().toUtf8();
+            result[std::string(key.constData(), key.size())] =
+                LuaCodec<T>::write(L, it.value());
+        }
+        return result;
     }
-    for (const QString &key : shape.toMap().keys()) {
-      const QByteArray utf8 = key.toUtf8();
-      result.insert(
-          key,
-          LuaCodec<T>::read(value[std::string(utf8.constData(), utf8.size())]));
-    }
-    return result;
-  }
-  static luabridge::LuaRef write(lua_State *L, const QMap<QString, T> &value) {
-    auto result = luabridge::LuaRef::newTable(L);
-    for (auto it = value.begin(); it != value.end(); ++it) {
-      const QByteArray key = it.key().toUtf8();
-      result[std::string(key.constData(), key.size())] =
-          LuaCodec<T>::write(L, it.value());
-    }
-    return result;
-  }
 };
 template <class T> struct LuaCodec<QHash<QString, T>> {
   static QHash<QString, T> read(const luabridge::LuaRef &value) {

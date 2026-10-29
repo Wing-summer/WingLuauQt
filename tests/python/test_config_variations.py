@@ -10,6 +10,8 @@ import pathlib
 import tempfile
 import unittest
 
+from qtluau_codegen.catalog import NATIVE_CLASSES
+from qtluau_codegen.discovery import SDK_ENUMS, discover_sdk, scan
 from qtluau_codegen.models import JsonObject
 from qtluau_codegen.module_policy import qt_namespace
 from qtluau_codegen.project import cpp_name, export_project
@@ -18,6 +20,34 @@ from qtluau_codegen.type_policy import common_types
 
 class ConfigVariationTests(unittest.TestCase):
     """Keep configuration effective across registrations, definitions and catalogs."""
+
+    def test_component_snapshots_are_isolated(self) -> None:
+        """Switch SDK components in one process without leaking classes or enums."""
+        modules = ["QtCore", "QtGui", "QtWidgets"]
+        try:
+            discover_sdk([*modules, "QtNetwork"])
+        except ValueError:
+            self.skipTest("QtNetwork SDK is not installed")
+        root = pathlib.Path(__file__).resolve().parents[2]
+        baseline, _ = scan(modules)
+        self.assertNotIn("QTcpSocket", baseline)
+        config: JsonObject = json.loads((root / "examples/network-sdk.json").read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory)
+            export_project(config, output / "network", root)
+            self.assertIn("QTcpSocket", NATIVE_CLASSES)
+            self.assertIn("QSsl::SslProtocol", SDK_ENUMS)
+            self.assertNotIn("QTcpSocket", baseline)
+            self.assertIn("Qt6::Network", (output / "network/CMakeLists.txt").read_text())
+            dependencies = json.loads((output / "network/module_dependencies.json").read_text())
+            self.assertIn("Network", dependencies["qt_components"])
+            self.assertTrue(dependencies["modules"]["network"]["require"])
+            self.assertIn("QTcpSocket", dependencies["modules"]["network"]["sdk_types"])
+            export_project({"qt": {"widgets": {"include": ["QWidget"]}}}, output / "network", root)
+            self.assertFalse(list((output / "network/generated/custom").glob("sdk_*.cpp")))
+            self.assertNotIn("QTcpSocket", NATIVE_CLASSES)
+            self.assertNotIn("QSsl::SslProtocol", SDK_ENUMS)
+            self.assertNotIn("Qt6::Network", (output / "network/CMakeLists.txt").read_text())
 
     def test_invalid_names(self) -> None:
         """Reject invalid names before they reach generated C++, Luau or CMake."""

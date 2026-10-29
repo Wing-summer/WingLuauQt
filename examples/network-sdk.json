@@ -1,0 +1,111 @@
+{
+  "project": {
+    "name": "NetworkExample",
+    "namespace": "network_example",
+    "helpers": []
+  },
+  "qt": {
+    "discovery": {
+      "enabled": false,
+      "modules": [
+        "QtCore",
+        "QtGui",
+        "QtWidgets",
+        "QtNetwork"
+      ]
+    },
+    "widgets": {
+      "include": [
+        "QWidget"
+      ]
+    }
+  },
+  "sdk_bindings": {
+    "modules": {
+      "network": {
+        "abstract_socket": "QAbstractSocket",
+        "tcp_socket": "QTcpSocket",
+        "tcp_server": "QTcpServer",
+        "udp_socket": "QUdpSocket",
+        "datagram": "QNetworkDatagram",
+        "local_socket": "QLocalSocket",
+        "local_server": "QLocalServer",
+        "ssl_socket": "QSslSocket",
+        "ssl_server": "QSslServer",
+        "host_address": "QHostAddress",
+        "host_info": "QHostInfo",
+        "interface": "QNetworkInterface",
+        "address_entry": "QNetworkAddressEntry",
+        "proxy": "QNetworkProxy",
+        "ssl_configuration": "QSslConfiguration",
+        "ssl_certificate": "QSslCertificate",
+        "ssl_key": "QSslKey",
+        "ssl_error": "QSslError",
+        "ssl_cipher": "QSslCipher"
+      }
+    },
+    "module_dependencies": {
+      "network": {
+        "sdk_modules": [
+          "QtNetwork"
+        ],
+        "alias_style": "snake_case"
+      }
+    },
+    "enum_namespaces": {
+      "QSsl": {
+        "module": "network",
+        "alias": "ssl"
+      }
+    },
+    "class_adapters": {
+      "QAbstractSocket": {
+        "inherited_methods": true,
+        "context_owned": true,
+        "constructible": false
+      },
+      "QTcpSocket": {
+        "inherited_methods": true,
+        "context_owned": true
+      },
+      "QTcpServer": {
+        "inherited_methods": true,
+        "context_owned": true
+      },
+      "QUdpSocket": {
+        "inherited_methods": true,
+        "context_owned": true
+      },
+      "QSslSocket": {
+        "inherited_methods": true,
+        "context_owned": true
+      },
+      "QSslServer": {
+        "inherited_methods": true,
+        "context_owned": true,
+        "return_types": {
+          "nextPendingConnection": "QSslSocket *"
+        }
+      },
+      "QLocalSocket": {
+        "inherited_methods": true,
+        "context_owned": true
+      },
+      "QLocalServer": {
+        "inherited_methods": true,
+        "context_owned": true
+      }
+    }
+  },
+  "modules": {
+    "qt": {
+      "require": true
+    },
+    "network": {
+      "require": true
+    }
+  },
+  "naming": {
+    "functions": "snake_case"
+  }
+}

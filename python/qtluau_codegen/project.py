@@ -28,7 +28,7 @@ from .header_guards import guard_headers
 from .lua_c_api import emit_lua_c_apis
 from .models import JsonObject, object_field, object_list_field, string_list_field
 from .module_definitions import module_definitions
-from .module_policy import requires_module
+from .module_policy import qt_namespace, requires_module
 from .native_apis import emit_native_apis
 from .project_output import project_output
 from .qt_pipeline import emit
@@ -38,7 +38,18 @@ from .sdk_version import validate_version
 def cpp_name(value: object) -> str:
     """Validate a public C++ name and reject reserved language keywords."""
     name = identifier(value)
-    if name in {"class", "namespace", "struct", "template", "public", "private", "protected"}:
+    if name in set("""
+        alignas alignof and and_eq asm atomic_cancel atomic_commit atomic_noexcept
+        auto bitand bitor bool break case catch char char8_t char16_t char32_t class
+        compl concept const consteval constexpr constinit const_cast continue
+        co_await co_return co_yield decltype default delete do double dynamic_cast
+        else enum explicit export extern false float for friend goto if inline int
+        long mutable namespace new noexcept not not_eq nullptr operator or or_eq
+        private protected public register reinterpret_cast requires return short
+        signed sizeof static static_assert static_cast struct switch synchronized
+        template this thread_local throw true try typedef typeid typename union
+        unsigned using virtual void volatile wchar_t while xor xor_eq
+    """.split()):
         raise ValueError(f"Invalid C++ identifier: {name}")
     return name
 
@@ -321,19 +332,22 @@ def _export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path
     for module, source in emit_callbacks(config, generated).items():
         extra_definitions[module] = extra_definitions.get(module, "") + source
     metadata.extend(extra_metadata)
-    named_modules = set(extra_definitions) - {""} | {"qt"} | {str(entry["module"]) for entry in metadata if entry.get("module")}
+    qt_module = qt_namespace(config)
+    named_modules = set(extra_definitions) - {""} | {qt_module} | {str(entry["module"]) for entry in metadata if entry.get("module")}
     for module in object_field(config, "modules"):
         if module not in named_modules:
             raise ValueError("Unknown module exposure policy: " + module)
     required_modules = {module for module in named_modules if requires_module(config, module)}
     public_modules = named_modules - required_modules
     definition_bundle = DefinitionFiles()
-    module_text = module_definitions(definitions_dir, metadata, extra_definitions, public_modules, definition_bundle, name, object_field(config, "symbol_categories"))
+    module_text = module_definitions(definitions_dir, metadata, extra_definitions, public_modules, definition_bundle, name, object_field(config, "symbol_categories"), config)
     modules = sorted(module_text)
     symbols = [module_symbol(m) for m in modules]
     if len(set(symbols)) != len(symbols):
         raise ValueError("Module names collide with the generated public registration symbol")
     for directory in ("include", "support"):
+        # Shipped assets are owned by the generator; remove obsolete files too.
+        shutil.rmtree(output / directory, ignore_errors=True)
         shutil.copytree(
             root / directory,
             output / directory,
@@ -539,7 +553,7 @@ def _export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path
     for module_index, module in enumerate(modules):
         chunk_start = len(cpp)
         entries = [e for e in metadata if e.get("module", e["namespace"]) == module]
-        needs_qt = module == "qt" or any(e["base"] == "QWidget" for e in entries)
+        needs_qt = module == qt_module or any(e["base"] == "QWidget" for e in entries)
         key = name + ".module." + module
         cpp.extend(
             [
@@ -559,7 +573,7 @@ def _export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path
             for e in entries
             if e.get("binding") not in {"functions", "callbacks"}
         )
-        if module and (module == "qt" or any(e.get("binding") != "custom" for e in entries)):
+        if module and (module == qt_module or any(e.get("binding") != "custom" for e in entries)):
             cpp.extend(
                 [
                     f'lua_getglobal(L, "{module}");',
@@ -684,13 +698,18 @@ def _export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path
         f'if(NOT TARGET {target})\n  message(FATAL_ERROR "Required host target {target} must exist before adding {name}")\nendif()'
         for target in host_targets
     )
+    qt_components = sorted({"Core", "Gui", "Widgets", "UiTools"} | {
+        module.removeprefix("Qt") for module in
+        string_list_field(object_field(object_field(config, "qt"), "discovery"), "modules")
+    })
+    qt_libraries = " ".join("Qt6::" + component for component in qt_components)
     cmake = f"""cmake_minimum_required(VERSION 3.24)
 project({name} LANGUAGES CXX)
 # Preserve the parent AUTOMOC policy; native input headers enable it per target.
 set(CMAKE_AUTOMOC OFF)
 {host_root}
 {host_checks}
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets UiTools)
+find_package(Qt6 REQUIRED COMPONENTS {" ".join(qt_components)})
 find_package(Threads REQUIRED)
 set(LUAU_SOURCE_DIR "${{CMAKE_SOURCE_DIR}}/3rdparty/luau" CACHE PATH "Luau source dependency")
 set(LUABRIDGE3_SOURCE_DIR "${{CMAKE_SOURCE_DIR}}/3rdparty/LuaBridge3" CACHE PATH "LuaBridge3 source dependency")
@@ -722,7 +741,7 @@ target_include_directories({name} PUBLIC
 {include_lines}
   "${{CMAKE_CURRENT_SOURCE_DIR}}/generated")
 target_compile_definitions({name} PUBLIC {" ".join(quote(d) for d in defines)})
-target_link_libraries({name} PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets Qt6::UiTools Luau.VM ${{_qtluau_luabridge}} {"Luau.Compiler " if execution_helper else ""}Threads::Threads {" ".join(host_targets)})
+target_link_libraries({name} PUBLIC {qt_libraries} Luau.VM ${{_qtluau_luabridge}} {"Luau.Compiler " if execution_helper else ""}Threads::Threads {" ".join(host_targets)})
 """
     filenames = " ".join(quote(filename) for filename in sorted(expected_definitions))
     write(output / "copy_definitions.cmake", f"""cmake_minimum_required(VERSION 3.24)
@@ -786,7 +805,7 @@ endfunction()
     write(output / "manifest.json", json.dumps(manifest, indent=2) + "\n")
     write(
         output / "README.md",
-        f"# {name}\n\nGenerated standalone static CMake library. Link `{name}::Bindings` and include `generated_bindings.hpp`.\n\nCall `registerPublicModule`, `registerModule_qt`, a configured module function, or `registerAllModules`. `definitionFiles()` returns public components in dependency order; `moduleFiles()` returns require-only module type entry paths. Call `registerEagerModules` at startup and let the host load required modules through `loadRegisteredModule`. Call `{name}_copy_definitions(YourExecutable)` in CMake; configure `{name}_DEFINITIONS_DIR` (default `luaudef`) to change the location. {'`executeScript` compiles and runs Luau source. ' if execution_helper else ''}{'The optional require wrapper is available. ' if require_helper else 'The host owns require. '} Dependencies are Qt 6, Luau and LuaBridge3; override their CMake source paths when relocating.\n",
+        f"# {name}\n\nGenerated standalone static CMake library. Link `{name}::Bindings` and include `generated_bindings.hpp`.\n\nCall `registerPublicModule`, `{module_symbol(qt_module)}`, a configured module function, or `registerAllModules`. `definitionFiles()` returns public components in dependency order; `moduleFiles()` returns require-only module type entry paths. Call `registerEagerModules` at startup and let the host load required modules through `loadRegisteredModule`. Call `{name}_copy_definitions(YourExecutable)` in CMake; configure `{name}_DEFINITIONS_DIR` (default `{definition_directory}`) to change the location. {'`executeScript` compiles and runs Luau source. ' if execution_helper else ''}{'The optional require wrapper is available. ' if require_helper else 'The host owns require. '} Dependencies are Qt 6, Luau and LuaBridge3; override their CMake source paths when relocating.\n",
     )
     # Disposable parser/moc reports are useful in development scan output, but
     # have no role in the library repository delivered to the host.

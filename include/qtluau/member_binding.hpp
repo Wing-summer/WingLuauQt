@@ -23,6 +23,18 @@ template <class T> int checkedMethodCall(lua_State *L) {
   lua_call(L, arguments, LUA_MULTRET);
   return lua_gettop(L);
 }
+
+template <class T>
+luabridge::LuaRef staticClassFunction(const luabridge::LuaRef &key,
+                                    lua_State *state) {
+  lua_rawgetp(state, LUA_REGISTRYINDEX,
+             const_cast<void *>(luabridge::detail::getStaticRegistryKey<T>()));
+  key.push(state);
+  lua_rawget(state, -2);
+  auto result = luabridge::LuaRef::fromStack(state, -1);
+  lua_pop(state, 2);
+  return result.isFunction() ? result : luabridge::LuaRef(state);
+}
 } // namespace detail
 
 // Wrap only instance methods. Constructors, module functions, properties and
@@ -56,6 +68,13 @@ template <class T> void guardClassMethods(lua_State *L) {
 template <template <class> class Registrar, class T>
 void guardClassMethods(lua_State *L, Registrar<T> &) {
   guardClassMethods<T>(L);
+}
+
+// LuaBridge's class-method fallback otherwise shadows a same-name static API.
+// Consult the static method table first; userdata keeps its instance methods.
+template <template <class> class Registrar, class T>
+void preferStaticClassFunctions(lua_State *, Registrar<T> &registration) {
+  registration.addStaticIndexMetaMethod(&detail::staticClassFunction<T>);
 }
 } // namespace qtluau
 #endif

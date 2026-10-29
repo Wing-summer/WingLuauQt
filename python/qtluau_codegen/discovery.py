@@ -21,6 +21,8 @@ from .models import NativeClass, NativeMethod
 SDK_ENUMS: dict[str, dict[str, int]] = {}
 #: Fully resolved QFlags aliases, discovered from compiler typedef declarations.
 SDK_FLAGS: dict[str, str] = {}
+#: Container aliases resolved from compiler declarations, including global aliases.
+SDK_CONTAINER_ALIASES: dict[str, str] = {}
 #: Native free functions discovered alongside SDK classes.
 SDK_FUNCTIONS: list[NativeMethod] = []
 
@@ -94,7 +96,15 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
             raise ValueError("tsujikiri could not parse the Qt SDK:\n" + "\n".join(errors))
         # Semantic deletion survives Qt macros whose token spelling is not '= delete'.
         clang = cast(Clang, importlib.import_module("clang.cindex"))
-        unit = clang.Index.create().parse(str(source), args=["-std=c++17", *flags])
+        unit = clang.Index.create().parse(str(source), args=["-std=c++17", *flags,
+            '-DQT_ANNOTATE_ACCESS_SPECIFIER(x)=__attribute__((annotate(#x)))',
+            '-DQT_ANNOTATE_FUNCTION(x)=__attribute__((annotate(#x)))'])
+        for cursor in unit.cursor.get_children():
+            if cursor.kind.name in {"TYPEDEF_DECL", "TYPE_ALIAS_DECL"}:
+                canonical = cursor.underlying_typedef_type.get_canonical().spelling
+                if re.match(r"Q(?:List|Vector|Map|Hash)<", canonical):
+                    SDK_CONTAINER_ALIASES[cursor.spelling] = canonical
+        signals: set[tuple[str, str]] = set()
         deleted: dict[str, set[tuple[str, ...]]] = {}
         noncopyable: set[str] = set()
         constructor_cursors = (
@@ -108,11 +118,20 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
             for child in record.get_children()
         )
         for cursor in constructor_cursors:
+            if cursor.kind.name == "CXX_METHOD" and any(
+                child.kind.name == "ANNOTATE_ATTR" and child.spelling == "qt_signal"
+                for child in cursor.get_children()
+            ):
+                parent = cursor.semantic_parent
+                if parent is not None:
+                    signals.add((parent.spelling, cursor.spelling))
             if cursor.kind.name in {"TYPEDEF_DECL", "TYPE_ALIAS_DECL"}:
                 canonical = cursor.underlying_typedef_type.get_canonical().spelling
                 parent = cursor.semantic_parent
                 if canonical.startswith("QFlags<") and parent is not None:
                     SDK_FLAGS[parent.spelling + "::" + cursor.spelling] = canonical
+                elif re.match(r"Q(?:List|Vector|Map|Hash)<", canonical) and parent is not None:
+                    SDK_CONTAINER_ALIASES[parent.spelling + "::" + cursor.spelling] = canonical
                 continue
             if cursor.kind.name != "CONSTRUCTOR" or not cursor.is_deleted_method():
                 continue
@@ -141,7 +160,8 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
         if c.source_file
         and c.name == c.qualified_name
         and re.fullmatch(r"Q[A-Za-z0-9_]+", c.name)
-        and any("/" + m + "/" in c.source_file.replace("\\", "/") for m in modules)
+        and any("/" + m + "/" in c.source_file.replace("\\", "/")
+                or "/" + m + ".framework/" in c.source_file.replace("\\", "/") for m in modules)
     }
 
     def signature(method: IRMethod) -> tuple[str, tuple[str, ...], bool]:
@@ -205,6 +225,7 @@ def _scan(modules: tuple[str, ...]) -> tuple[dict[str, NativeClass], list[str]]:
                     "static": method.is_static,
                     "variadic": method.is_varargs,
                     "deprecated": method.is_deprecated,
+                    "signal": (name, method.name) in signals,
                 }
             )
         abstract = bool(abstract_methods(name))

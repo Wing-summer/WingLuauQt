@@ -53,6 +53,8 @@ class NativeMethod(TypedDict):
     args: list[str]
     #: Native parameter names, in declaration order.
     parameter_names: NotRequired[list[str]]
+    #: Whether the method is a Qt signal rather than a callable method.
+    signal: NotRequired[bool]
     #: Whether the native method is const-qualified.
     const: bool
     #: Whether the native member is static.

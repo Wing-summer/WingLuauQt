@@ -1,0 +1,51 @@
+{
+  "sdk_bindings": {
+    "modules": {
+      "filesystem": {
+        "file": "QFile",
+        "fileinfo": "QFileInfo",
+        "dir": "QDir"
+      }
+    },
+    "class_adapters": {
+      "QFile": {
+        "includes": [
+          "host/filesystem.h"
+        ],
+        "factory": "HostFileSystem::createFile",
+        "guard": "HostFileSystem::checkAccess",
+        "inherited_methods": true,
+        "methods": {
+          "open": "HostFileSystem::openFile"
+        },
+        "guard_selector": "files"
+      }
+    },
+    "guard_selectors": {
+      "files": {
+        "const": "HostFileSystem::Access::Read",
+        "mutable": "HostFileSystem::Access::Unknown",
+        "rules": [
+          {
+            "methods": [
+              "open"
+            ],
+            "value": "HostFileSystem::Access::Read"
+          },
+          {
+            "methods": [
+              "write",
+              "resize"
+            ],
+            "value": "HostFileSystem::Access::Write"
+          }
+        ]
+      }
+    }
+  },
+  "modules": {
+    "filesystem": {
+      "require": false
+    }
+  }
+}

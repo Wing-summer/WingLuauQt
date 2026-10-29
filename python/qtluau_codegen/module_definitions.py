@@ -11,6 +11,7 @@ from .declaration_tables import callable_tables, merge_namespace_declarations
 from .definition_graph import DefinitionFiles, partition
 from .extensions import definitions
 from .models import JsonObject
+from .module_policy import qt_namespace
 from .symbol_catalog import emit_symbol_catalog
 
 DECLARATION = re.compile(r"^(?:declare |(?:export )?type )", re.MULTILINE)
@@ -65,6 +66,7 @@ def module_definitions(
     public_modules: set[str] | None = None,
     files: DefinitionFiles | None = None, prefix: str = "bindings",
     categories: JsonObject | None = None,
+    naming_config: JsonObject | None = None,
 ) -> dict[str, str]:
     """Build one shared definition file and one type entry per named module.
 
@@ -84,7 +86,7 @@ def module_definitions(
     qt_types, qt_globals = split_declarations((directory / "qt.d.luau").read_text())
     extension_types, _ = split_declarations(definitions(extensions))
     types = [*common_types, *qt_types, *extension_types]
-    modules = {"": common_globals, "qt": qt_globals}
+    modules = {"": common_globals, qt_namespace(naming_config or {}): qt_globals}
     module_types: dict[str, list[str]] = {}
     for module, source in (extra or {}).items():
         aliases, values = split_declarations(source)
@@ -139,11 +141,12 @@ def module_definitions(
     entries = {module: f"return (nil :: any) :: {aliases[module]}"
                for module in modules if module}
     bundle = files if files is not None else DefinitionFiles()
-    emit_symbol_catalog(all_types, value_types, public_names, globals_, bundle, prefix, categories or {}, module_types)
     declaration_types: dict[str, str] = {}
     for name, source in all_types.items():
         declaration_types[name] = source if name.startswith("_qt_") else callable_tables(source, declaration_types)
     result = partition(declaration_types, globals_, entries, bundle, prefix)
+    emit_symbol_catalog(all_types, value_types, public_names, globals_, bundle, prefix,
+                        categories or {}, module_types, declaration_types, naming_config)
     remaining_globals = list(globals_)
     if files is not None:
         for module in sorted(public):

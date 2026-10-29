@@ -42,6 +42,7 @@ from .models import (
     object_list_field,
     string_list_field,
 )
+from .module_policy import qt_namespace
 from .type_policy import common_types
 
 
@@ -176,9 +177,7 @@ def generate(
     policies = common_types(config)
     string_alias = policies["QString"]["alias"]
     qt = object_field(config, "qt")
-    namespace = qt.get("namespace", "qt")
-    if namespace != "qt":
-        raise ValueError("this runtime currently supports only the 'qt' namespace")
+    namespace = qt_namespace(config)
     widgets = object_field(qt, "widgets")
     requested = list_names(widgets.get("include", DEFAULT_WIDGETS)) + list_names(
         string_list_field(widgets, "extra_types")
@@ -317,7 +316,7 @@ def generate(
     for name in ordered_types:
         builtins.append(class_def(name, metadata[name]))
     common_lines: list[str] = []
-    lines = ["declare qt: {"]
+    lines = [f"declare {namespace}: {{"]
     for canonical, adapter in COMMON_ADAPTERS.items():
         policy = policies[canonical]
         alias = policy["alias"]

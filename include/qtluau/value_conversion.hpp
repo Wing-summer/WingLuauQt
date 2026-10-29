@@ -104,7 +104,8 @@ struct LuaCodec<T, std::enable_if_t<std::is_arithmetic_v<T>>> {
           return static_cast<T>(number);
         }
         if constexpr (std::is_unsigned_v<T>) {
-          if (auto boxed = value.template cast<VariantBox>()) {
+          if (value.template isInstance<VariantBox>()) {
+            auto boxed = value.template cast<VariantBox>();
             if (boxed->value.metaType().id() != QMetaType::ULongLong ||
                 boxed->value.toULongLong() > std::numeric_limits<T>::max()) {
               throw std::invalid_argument(
@@ -260,27 +261,36 @@ template <class T> luabridge::LuaRef qtToLua(lua_State *L, const T &value) {
 // Distinct argument types let LuaBridge resolve equal-arity overloads before
 // invoking them, while keeping all Qt conversion in the shared codecs.
 namespace qtluau {
-template <class T> struct QtArgument {
-  T value;
+template <class T, auto... Values>
+struct QtArgument {
+    T value;
 };
 } // namespace qtluau
 namespace luabridge {
-template <class T> struct Stack<qtluau::QtArgument<T>> {
-  static TypeResult<qtluau::QtArgument<T>> get(lua_State *L, int index) {
-    try {
-      return qtluau::QtArgument<T>{
-          qtluau::qtFromLua<T>(LuaRef::fromStack(L, index))};
-    } catch (const std::exception &) {
-      return makeErrorCode(ErrorCode::InvalidTypeCast);
+template <class T, auto... Values>
+struct Stack<qtluau::QtArgument<T, Values...>> {
+    static TypeResult<qtluau::QtArgument<T, Values...>> get(lua_State *L,
+                                                            int index) {
+        try {
+            auto value = qtluau::qtFromLua<T>(LuaRef::fromStack(L, index));
+            if constexpr (sizeof...(Values) > 0) {
+                if (!((value == static_cast<T>(Values)) || ...)) {
+                    return makeErrorCode(ErrorCode::InvalidTypeCast);
+                }
+            }
+            return qtluau::QtArgument<T, Values...>{std::move(value)};
+        } catch (const std::exception &) {
+            return makeErrorCode(ErrorCode::InvalidTypeCast);
+        }
     }
-  }
-  static bool isInstance(lua_State *L, int index) {
-    return bool(get(L, index));
-  }
-  static Result push(lua_State *L, const qtluau::QtArgument<T> &value) {
-    qtluau::qtToLua(L, value.value).push();
-    return {};
-  }
+    static bool isInstance(lua_State *L, int index) {
+        return bool(get(L, index));
+    }
+    static Result push(lua_State *L,
+                       const qtluau::QtArgument<T, Values...> &value) {
+        qtluau::qtToLua(L, value.value).push();
+        return {};
+    }
 };
 } // namespace luabridge
 

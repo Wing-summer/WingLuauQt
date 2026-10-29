@@ -4,6 +4,16 @@ Run `wingluauqt-project --config bindings.json --root . --out build/bindings`. P
 
 通过上述命令生成独立 CMake 静态库。策略中的路径相对于 `--root`，未指定时相对于策略文件；工程名及 C++ 命名空间可配置。生成目录可随时删除并重新生成，不手工修改。
 
+## Public names and configuration / 公开名称与配置
+
+`qt.namespace` selects the public Qt module name (default `qt`); it is independent of `project.namespace`, the generated C++ namespace. Registration, UI helpers, module exposure, definitions and symbol display paths follow this name. Set `modules.<name>.require` using the chosen module name. Internal `_qt_*` declaration identities and the `qtluau` C++ implementation namespace are stable implementation details, not public package names.
+
+`qt.namespace` 决定 Qt 的公开模块名，默认仍为 `qt`；它与生成 C++ 命名空间 `project.namespace` 独立。注册、UI 辅助函数、模块访问策略、定义及符号显示路径共同使用该名称。`modules.<name>.require` 应使用实际选择的模块名。内部 `_qt_*` 类型标识和 C++ 实现命名空间 `qtluau` 保持稳定，不代表公开包名。
+
+`common.types.<Native>.alias` controls the public common-type alias, including SDK-scanned signatures. Aliases must be unique and must not collide with the Qt module name. `project.name` controls CMake targets and generated definition/catalog filenames; `project.definitions_directory` controls deployment paths. Invalid Luau identifiers and C++ project/namespace keywords are rejected during generation. Disabling an alias retains private dependency types where required without publishing the alias.
+
+`common.types.<Native>.alias` 控制基础类型的公开别名及 SDK 扫描签名。别名必须唯一，且不能与 Qt 模块名冲突。`project.name` 控制 CMake 目标及生成定义/目录文件名，`project.definitions_directory` 控制部署位置。无效 Luau 标识符和 C++ 工程名/命名空间关键字会在生成时被拒绝。关闭别名时，必要的依赖类型仍以私有形式保留，不公开该别名。
+
 ## CMake and source ownership / CMake 与源码归属
 
 Link `<Name>::Bindings` after `add_subdirectory`. In `copy` mode extension sources are copied and native MOC is run by the consuming SDK. In `reference` mode `<Name>_HOST_SOURCE_DIR` defaults to `${CMAKE_SOURCE_DIR}`; native implementations and MOC remain host-owned. `project.host_targets` must exist before adding the generated project. Native API callbacks require reference mode.

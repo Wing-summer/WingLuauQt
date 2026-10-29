@@ -11,11 +11,8 @@ from typing import cast
 
 from .catalog import TYPE_DEFAULTS
 from .models import CommonTypePolicy, JsonObject, object_field
+from .module_policy import KEYWORDS, qt_namespace
 from .type_mapping import is_table_container
-
-KEYWORDS = set(
-    "and break do else elseif end false for function if in local nil not or repeat return then true until while".split()
-)
 
 
 def common_types(config: JsonObject) -> dict[str, CommonTypePolicy]:
@@ -53,7 +50,7 @@ def common_types(config: JsonObject) -> dict[str, CommonTypePolicy]:
         if (
             not isinstance(alias, str)
             or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", alias)
-            or alias in KEYWORDS | {"qt", "_G"}
+            or alias in KEYWORDS | {qt_namespace(config), "_G"}
             or alias in aliases
         ):
             raise ValueError(f"invalid or duplicate common type alias: {alias}")

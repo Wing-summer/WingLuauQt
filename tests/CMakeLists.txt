@@ -142,4 +142,8 @@ add_test(NAME generic_module_registry COMMAND WingLuauQtModuleTests)
 
 qtluau_python_test(api_baseline_and_naming test_api_policy)
 qtluau_python_test(project_output_publication test_project_output)
+qtluau_python_test(symbol_display_names test_symbol_display)
+qtluau_python_test(host_sdk_adapters test_sdk_adapters)
+qtluau_python_test(sdk_signal_generation test_signal_codegen)
+qtluau_python_test(configuration_variations test_config_variations)
 qtluau_python_test(wrapper_declaration_contract test_wrapper_contract)

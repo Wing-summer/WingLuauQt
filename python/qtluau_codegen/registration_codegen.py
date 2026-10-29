@@ -29,6 +29,7 @@ from .exclusions import excluded_method
 from .extensions import write
 from .function_naming import rename_registration_source
 from .models import ClassDefinition, JsonObject, Method, object_field, string_list_field
+from .module_policy import qt_namespace
 from .selection import matches
 from .type_mapping import mapped_type
 from .type_policy import common_types
@@ -43,8 +44,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
     if any(not part.isidentifier() or not part.isascii() for part in namespace.split("::")):
         raise ValueError("Invalid registration namespace")
     qt = object_field(config, "qt")
-    if qt.get("namespace", "qt") != "qt":
-        raise ValueError("Qt registration requires qt.namespace = 'qt'")
+    module = qt_namespace(config)
     widgets = object_field(qt, "widgets")
     ui = object_field(qt, "ui_tools")
     policies = common_types(config)
@@ -283,7 +283,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
     code.extend(
         [
             "void register_QObject(lua_State *L) {",
-            'auto cls = luabridge::getGlobalNamespace(L).beginNamespace("qt").beginClass<QObjectRef>("QObject");',
+            f'auto cls = luabridge::getGlobalNamespace(L).beginNamespace("{module}").beginClass<QObjectRef>("QObject");',
         ]
     )
     code.extend(method_lines("QObject", OBJECT_TYPE["methods"], "QObjectRef"))
@@ -295,7 +295,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
         code.extend(
             [
                 f"void register_{name}(lua_State *L) {{",
-                f'auto cls = luabridge::getGlobalNamespace(L).beginNamespace("qt").beginClass<{name}>("{name}");',
+                f'auto cls = luabridge::getGlobalNamespace(L).beginNamespace("{module}").beginClass<{name}>("{name}");',
             ]
         )
         code.extend(constructor(name, definition, name))
@@ -346,7 +346,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
         base_cpp = "QtWidgetRef" if base == "QWidget" else "QtLayoutRef"
         start = f"beginClass<{cpp}>" if base is None else f"deriveClass<{cpp}, {base_cpp}>"
         code.append(
-            f'auto cls = luabridge::getGlobalNamespace(L).beginNamespace("qt").{start}("{name}");'
+            f'auto cls = luabridge::getGlobalNamespace(L).beginNamespace("{module}").{start}("{name}");'
         )
         ctors = constructor(name, widget_definition, cpp)
         if typed:
@@ -385,7 +385,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
         if not rejected(name):
             code.append(f"register_{name}(L);")
 
-    code.extend(['lua_getglobal(L, "qt");', "const int table = lua_gettop(L);"])
+    code.extend([f'lua_getglobal(L, "{module}");', "const int table = lua_gettop(L);"])
     for name, policy in policies.items():
         if rejected(name):
             continue
@@ -407,7 +407,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
                  "void registerQtBindings(lua_State *L) {", 'RegistrationGuard registration(L, "base.widgets"); if (!registration) { return; }', "registerQtValueBindings(L);",
                  "register_QWidget(L);"])
     code.extend(f"register_{name}(L);" for name in names if name != "QWidget")
-    code.extend(['lua_getglobal(L, "qt");', "const int table = lua_gettop(L);"])
+    code.extend([f'lua_getglobal(L, "{module}");', "const int table = lua_gettop(L);"])
     for name in names:
         if not visible(name):
             code.append(f'lua_pushnil(L); lua_rawsetfield(L, table, "{name}");')
@@ -415,7 +415,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
     if ui.get("enabled", True):
         code.extend(
             [
-                'auto uiNamespace = luabridge::getGlobalNamespace(L).beginNamespace("qt");',
+                f'auto uiNamespace = luabridge::getGlobalNamespace(L).beginNamespace("{module}");',
                 'uiNamespace.addFunction("loadUiWidgetXml", &::qtluau::detail::loadUiXml);',
                 f'uiNamespace.addFunction("loadUiWidgetFile", [roots = QStringList{qt_list(string_list_field(ui, "allowed_roots"))}](const std::string &path) {{ return ::qtluau::detail::loadUiFile(path, roots); }});',
                 "uiNamespace.endNamespace();",

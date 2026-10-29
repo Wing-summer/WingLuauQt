@@ -24,6 +24,7 @@ from .catalog import (
     DEFAULT_WIDGETS,
     EXCLUDED_ALWAYS,
     LAYOUT_POINTERS,
+    NATIVE_CLASSES,
     OBJECT_POINTERS,
     TYPE_DEFAULTS,
     WIDGET_POINTERS,
@@ -82,6 +83,7 @@ def emit(
         )
     common_types(config)
     resolved, classes, flags, report = resolve(config)
+    NATIVE_CLASSES.update(classes)
     out.mkdir(parents=True, exist_ok=True)
     # Obsolete dynamic registration inputs must not survive incremental generation.
     for filename in (
@@ -213,7 +215,8 @@ def emit(
             if mn in existing or mn.startswith("operator") or method["static"]:
                 continue
             if (
-                method["variadic"]
+                method.get("signal")
+                or method["variadic"]
                 or method["deprecated"]
                 or excluded_method(excluded, name, mn, method["args"])
                 or excluded_method(excluded, method["owner"], mn, method["args"])

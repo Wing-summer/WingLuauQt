@@ -4,6 +4,7 @@
 
 include_guard(GLOBAL)
 include("${CMAKE_CURRENT_LIST_DIR}/WingLuauQtPython.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/WingLuauQtGeneration.cmake")
 set(_WINGLUAUQT_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
 cmake_path(NORMAL_PATH _WINGLUAUQT_ROOT)
 string(REGEX REPLACE "/+$" "" _WINGLUAUQT_ROOT "${_WINGLUAUQT_ROOT}")
@@ -33,7 +34,15 @@ function(wingluauqt_generate)
     "${_WINGLUAUQT_ROOT}/include/qtluau/*.hpp"
     "${_WINGLUAUQT_ROOT}/support/*.cpp"
     "${_WINGLUAUQT_ROOT}/support/qt/*.cpp"
-    "${_WINGLUAUQT_ROOT}/support/bindings/*")
+    "${_WINGLUAUQT_ROOT}/support/bindings/*"
+    "${_WINGLUAUQT_ROOT}/cmake/*.cmake"
+    "${_WINGLUAUQT_ROOT}/pyproject.toml"
+    "${_WINGLUAUQT_ROOT}/LICENSE")
+  if(NOT EXISTS "${_WINGLUAUQT_ROOT}/python" AND WINGLUAUQT_PYTHON_PACKAGE_ROOT)
+    file(GLOB_RECURSE _installed_inputs CONFIGURE_DEPENDS
+      "${WINGLUAUQT_PYTHON_PACKAGE_ROOT}/qtluau_codegen/*.py")
+    list(APPEND _framework_inputs ${_installed_inputs})
+  endif()
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${_config}" ${_driver} ${_driver_config} ${ARG_DEPENDS} ${_framework_inputs})
   if(EXISTS "${_WINGLUAUQT_ROOT}/python")
@@ -51,10 +60,10 @@ else:
     runpy.run_path(entry, run_name='__main__')")
     set(_command "${Python3_EXECUTABLE}" -c "${_launcher}" "${WINGLUAUQT_PYTHON_PACKAGE_ROOT}" ${_command})
   endif()
-  execute_process(COMMAND ${_command} RESULT_VARIABLE _result)
-  if(NOT _result EQUAL 0)
-    message(FATAL_ERROR "WingLuauQt generation failed; see generator diagnostics above")
-  endif()
+  wingluauqt_cached_generation(OUTPUT_DIR "${_output}" ROOT "${_root}"
+    WATCH_FILE "${_output}/generation_inputs.cmake"
+    INPUTS "${_config}" ${_driver} ${_driver_config} ${ARG_DEPENDS} ${_framework_inputs}
+    COMMAND ${_command})
   set(_wingluauqt_input_root "${_root}")
   include("${_output}/generation_inputs.cmake")
 endfunction()

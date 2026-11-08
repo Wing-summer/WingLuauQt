@@ -147,3 +147,6 @@ qtluau_python_test(host_sdk_adapters test_sdk_adapters)
 qtluau_python_test(sdk_signal_generation test_signal_codegen)
 qtluau_python_test(configuration_variations test_config_variations)
 qtluau_python_test(wrapper_declaration_contract test_wrapper_contract)
+
+qtluau_python_test(configure_generation_cache test_generation_cache)
+qtluau_python_test(generation_input_watchers test_generation_inputs)

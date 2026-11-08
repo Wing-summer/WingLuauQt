@@ -108,6 +108,8 @@ std::shared_ptr<LuaCallbackSlot> trackCallback(luabridge::LuaRef callback) {
 }
 
 } // namespace
+const void *luaContextKey(lua_State *L) { return contextKey(L); }
+
 void setLuaContextResolver(lua_State *L, LuaContextResolver resolver) {
     std::lock_guard<std::mutex> lock(g_callbackMutex);
     resources->vms[lua_mainthread(L)].resolver = resolver;

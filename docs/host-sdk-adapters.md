@@ -25,3 +25,9 @@ Set a class adapter's `context_owned` to track newly constructed QObjects throug
 `module_dependencies.<module>.sdk_modules` additionally exports discovered dependency classes from those SDK components using snake_case aliases after removing `Q`. Existing explicit aliases take precedence, and collisions fail generation. `enum_namespaces` selects scanned namespace enums with a destination module and alias. Component headers and linked Qt targets follow the configured SDK modules. See `examples/network-sdk.json` for a standalone example; hosts own their concrete module policy.
 
 module_dependencies 可将指定 SDK 组件中的依赖类自动导出为简短别名；显式别名优先，冲突报错。enum_namespaces 选择扫描得到的命名空间枚举及目标模块、别名。Qt 头文件和链接目标跟随 SDK 模块配置。具体模块策略由宿主维护。
+
+## Native callback caller state / 原生回调调用状态
+
+A `native_apis[].groups[]` entry may set `pass_lua_state: true` to append the actual calling `lua_State *` to its C++ callback contract. The option defaults to false and must be a JSON boolean. Script signatures, default arguments and return conversions remain unchanged. The host owns any per-execution policy; `luaContextKey(L)` returns the context selected by the existing resolver, including queued callback overrides, and can be paired with `trackContextObject` / `clearLuaContext`.
+
+`native_apis[].groups[]` 可设置 `pass_lua_state: true`，在 C++ 回调参数末尾传入实际调用方的 `lua_State *`。该选项默认关闭，必须为 JSON 布尔值，不改变脚本签名、默认参数或返回值转换。执行上下文策略由宿主维护；`luaContextKey(L)` 返回既有解析器选择的上下文（包含排队回调覆盖值），可配合 `trackContextObject` / `clearLuaContext` 使用。

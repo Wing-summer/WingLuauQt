@@ -41,3 +41,13 @@ Configure aliases and methods through `common.types`. See [types and containers]
 Scan outputs include resolved policy, discovery reports, translation units and temporary tsujikiri input. Exported projects retain only compilation inputs, compiled registration statements and compact Luau type files. Load the shared definition once and resolve named type entries as ordinary modules; see [generated projects](generated-projects.md).
 
 扫描目录是可删除中间产物，导出工程只保留编译所需内容。公共定义与各模块类型入口分离，仅加载公共定义和对应的模块类型入口。
+
+## Configure reuse / 配置阶段复用
+
+CMake checks the contents of generation inputs and published outputs before scanning. An unchanged configure reuses the complete project without starting SDK discovery. Policy/driver changes, transitive local headers, framework sources, SDK headers, tool/environment changes and missing or modified generated files invalidate reuse. Touching an unchanged input or editing an unrelated host file does not regenerate bindings. Checkpoints and configure locks live beside the generated directory in the build tree; failed generation never updates the checkpoint. Configure calls sharing one output are serialized.
+
+CMake 在扫描前校验生成输入及已发布产物的内容。无改动时直接复用完整工程，不启动 SDK 扫描。策略或宿主驱动、间接引用的本地头文件、框架源码、SDK 头文件、工具／环境以及生成文件缺失或内容变化都会使复用失效；仅更新时间戳或编辑无关宿主文件不会重建绑定。校验记录及配置锁放在构建树的生成目录旁，生成失败不更新记录；共享输出目录的配置调用会串行执行。
+
+Use `-DWINGLUAUQT_FORCE_GENERATION=ON` to force a scan, then switch it back to `OFF` for normal reuse. The first configure and input-changing configures still perform full discovery. Standalone framework configuration emits runtime bindings and definitions in one Python process, avoiding a second SDK initialization. The CLI exposes the same combined operation through `qtluau_codegen.qt_pipeline --definitions-out <directory>`.
+
+需要强制扫描时使用 `-DWINGLUAUQT_FORCE_GENERATION=ON`，随后改回 `OFF` 恢复正常复用。首次配置及输入变化后的配置仍执行完整扫描。框架独立配置在同一 Python 进程中生成运行时绑定与类型定义，避免第二次 SDK 初始化；命令行也可通过 `qtluau_codegen.qt_pipeline --definitions-out <directory>` 执行合并生成。

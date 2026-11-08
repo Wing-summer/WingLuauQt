@@ -30,7 +30,7 @@ from .models import JsonObject, object_field, object_list_field, string_list_fie
 from .module_definitions import module_definitions
 from .module_policy import qt_namespace, requires_module
 from .native_apis import emit_native_apis
-from .project_output import project_output
+from .project_output import project_files, project_output
 from .qt_pipeline import emit
 from .sdk_version import validate_version
 
@@ -141,16 +141,20 @@ def generation_inputs(config: JsonObject, output: pathlib.Path, base: pathlib.Pa
         ValueError: An input path contains unsupported CMake delimiters.
     """
     patterns: set[str] = set()
+    headers: set[pathlib.Path] = set()
+    include_dirs: set[pathlib.Path] = {base.resolve()}
     for group, fields in (
         ("extensions", ("headers", "sources")),
         ("native_apis", ("headers",)),
         ("extra_bindings", ("files", "definitions")),
     ):
         for entry in object_list_field(config, group):
+            include_dirs.update(paths(base, string_list_field(entry, "include_dirs")))
             for field in fields:
                 for spelling in string_list_field(entry, field):
                     if spelling.startswith("@qtluau/"):
                         continue
+                    headers.update(paths(base, [spelling]))
                     path = pathlib.Path(spelling)
                     if path.is_absolute() and path.is_relative_to(base.resolve()):
                         path = path.relative_to(base.resolve())
@@ -160,12 +164,46 @@ def generation_inputs(config: JsonObject, output: pathlib.Path, base: pathlib.Pa
                     patterns.add(
                         pattern if path.is_absolute() else "${_wingluauqt_input_root}/" + pattern
                     )
-    lines = ["# Generated source-input watchers; the generation driver supplies the root."]
+    # Follow literal local includes without watching the entire host checkout.
+    pending = list(headers)
+    while pending:
+        header = pending.pop()
+        if header.suffix not in {".h", ".hpp", ".hxx", ".cpp", ".cc", ".c", ".inc"}:
+            continue
+        for delimiter, include in re.findall(
+            r'^\s*#\s*include\s*([<"])([^>"\n]+)[>"]',
+            header.read_text(errors="replace"), re.MULTILINE,
+        ):
+            directories = [*sorted(include_dirs)]
+            if delimiter == '"':
+                directories.insert(0, header.parent)
+            for directory in directories:
+                candidate = (directory / include).resolve()
+                if candidate.is_file():
+                    if candidate not in headers:
+                        headers.add(candidate)
+                        pending.append(candidate)
+    for header in headers:
+        if any(char in header.as_posix() for char in '\n\r;"$'):
+            raise ValueError("Unsupported CMake input path delimiter")
+        if header.is_relative_to(base.resolve()):
+            patterns.add("${_wingluauqt_input_root}/" + header.relative_to(base.resolve()).as_posix())
+        else:
+            patterns.add(header.as_posix())
+    lines = ["# Generated source-input watchers; the generation driver supplies the root.",
+             "set(_wingluauqt_generation_inputs)"]
     for index, pattern in enumerate(sorted(patterns)):
         lines.append(f'file(GLOB_RECURSE _wingluauqt_input_{index} CONFIGURE_DEPENDS "{pattern}")')
         lines.append(
             f"set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${{_wingluauqt_input_{index}}})"
         )
+        lines.append(f"list(APPEND _wingluauqt_generation_inputs ${{_wingluauqt_input_{index}}})")
+    lines.append("set(_wingluauqt_generation_outputs)")
+    for relative in sorted(project_files(output) | {pathlib.Path("generation_inputs.cmake")}):
+        lines.extend([
+            f"set(_wingluauqt_output {quote(relative)})",
+            'list(APPEND _wingluauqt_generation_outputs "${CMAKE_CURRENT_LIST_DIR}/${_wingluauqt_output}")',
+        ])
     write(output / "generation_inputs.cmake", "\n".join(lines) + "\n")
 
 
@@ -263,6 +301,7 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path,
         manifest = _export_project(config, staging, base)
         if postprocess is not None:
             postprocess(manifest, staging)
+        generation_inputs(config, staging, base)
     return manifest
 
 
@@ -834,7 +873,6 @@ endfunction()
         "qt_selected.inc",
     ):
         (generated / filename).unlink(missing_ok=True)
-    generation_inputs(config, output, base)
     apply_function_naming(config, output)
     guard_headers(output, name)
     restore_unchanged_outputs(previous_outputs)

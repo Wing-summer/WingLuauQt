@@ -8,21 +8,22 @@ file(GLOB QTLUAU_GENERATOR_INPUTS CONFIGURE_DEPENDS
   "${PROJECT_SOURCE_DIR}/python/qtluau_codegen/*.py"
   "${PROJECT_SOURCE_DIR}/config/bindings.json"
   "${PROJECT_SOURCE_DIR}/include/qtluau/*.hpp"
-  "${PROJECT_SOURCE_DIR}/support/qt/*.cpp")
+  "${PROJECT_SOURCE_DIR}/support/qt/*.cpp"
+  "${PROJECT_SOURCE_DIR}/config/*.json"
+  "${PROJECT_SOURCE_DIR}/pyproject.toml")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${QTLUAU_BINDING_CONFIG}" ${QTLUAU_GENERATOR_INPUTS})
-execute_process(COMMAND "${CMAKE_COMMAND}" -E env "PYTHONPATH=${PROJECT_SOURCE_DIR}/python"
-  "${Python3_EXECUTABLE}" -m qtluau_codegen.qt_pipeline --config "${QTLUAU_BINDING_CONFIG}" --out "${QTLUAU_GENERATED_DIR}"
-  RESULT_VARIABLE QTLUAU_SCAN_STATUS)
-if(NOT QTLUAU_SCAN_STATUS EQUAL 0)
-  message(FATAL_ERROR "Qt binding generation failed; see diagnostics above.")
-endif()
-execute_process(COMMAND "${CMAKE_COMMAND}" -E env "PYTHONPATH=${PROJECT_SOURCE_DIR}/python"
-  "${Python3_EXECUTABLE}" -m qtluau_codegen.generate_definitions
-  --config "${QTLUAU_GENERATED_DIR}/resolved-bindings.json" --out "${QTLUAU_GENERATED_DIR}/definitions"
-  RESULT_VARIABLE qtluau_definition_status)
-if(NOT qtluau_definition_status EQUAL 0)
-  message(FATAL_ERROR "Luau definition generation failed")
-endif()
+include("${CMAKE_CURRENT_LIST_DIR}/WingLuauQtGeneration.cmake")
+wingluauqt_cached_generation(OUTPUT_DIR "${QTLUAU_GENERATED_DIR}"
+  ROOT "${PROJECT_SOURCE_DIR}"
+  INPUTS "${QTLUAU_BINDING_CONFIG}" ${QTLUAU_GENERATOR_INPUTS}
+    "${CMAKE_CURRENT_LIST_FILE}" "${CMAKE_CURRENT_LIST_DIR}/WingLuauQtGeneration.cmake"
+  INPUT_LIST_FILES "${QTLUAU_GENERATED_DIR}/extension_inputs.txt"
+    "${QTLUAU_GENERATED_DIR}/extension_sources.txt"
+  OUTPUT_GLOBS "${QTLUAU_GENERATED_DIR}/*"
+  COMMAND "${CMAKE_COMMAND}" -E env "PYTHONPATH=${PROJECT_SOURCE_DIR}/python"
+    "${Python3_EXECUTABLE}" -m qtluau_codegen.qt_pipeline
+    --config "${QTLUAU_BINDING_CONFIG}" --out "${QTLUAU_GENERATED_DIR}"
+    --definitions-out "${QTLUAU_GENERATED_DIR}/definitions")
 # Each discovered class becomes a translation unit; adding a class needs no source-list edit.
 file(GLOB qtluau_generated_sources CONFIGURE_DEPENDS "${QTLUAU_GENERATED_DIR}/*.cpp")
 target_sources(qtluau_runtime PRIVATE ${qtluau_generated_sources})

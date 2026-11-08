@@ -15,6 +15,7 @@ import fnmatch
 import hashlib
 import json
 import pathlib
+import re
 
 from .catalog import NATIVE_CLASSES
 from .discovery import discover_sdk
@@ -91,6 +92,14 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
                 return (
                     ("luabridge::LuaRef" if result else "QtArgument<QUrl>"),
                     "_qt_QUrl",
+                    "qtToLua(L, {expr})" if result else "{expr}.value",
+                )
+            sequence = re.fullmatch(r"(?:QList|QVector)\s*<(.+)>", bare)
+            if sequence:
+                element = conversion(sequence[1].strip(), result)
+                return (
+                    "luabridge::LuaRef" if result else f"QtArgument<{bare}>",
+                    "{" + element[1] + "}",
                     "qtToLua(L, {expr})" if result else "{expr}.value",
                 )
             mapped = mapped_type(spelling, result)
@@ -264,6 +273,9 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
             rename = object_field(group, "rename")
             symbol = f"register_native_{index}_{namespace}"
             callback_type = f"NativeCallbacks_{index}_{namespace}"
+            pass_lua_state = group.get("pass_lua_state", False)
+            if not isinstance(pass_lua_state, bool):
+                raise ValueError("pass_lua_state must be a boolean")
             callback_fields: list[str] = []
             functions: dict[str, list[str]] = {}
             methods: list[JsonObject] = []
@@ -297,8 +309,11 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
                     else ""
                 )
                 callback_name = identifier(method.name + suffix)
+                callback_arguments = [qualified(p.type_spelling) for p in method.parameters]
+                if pass_lua_state:
+                    callback_arguments.append("lua_State *")
                 callback_fields.append(
-                    f"std::function<{qualified(method.return_type)}({', '.join(qualified(p.type_spelling) for p in method.parameters)})> {callback_name};"
+                    f"std::function<{qualified(method.return_type)}({', '.join(callback_arguments)})> {callback_name};"
                 )
                 for count in range(len(mapped) - default_count, len(mapped) + 1):
                     params = [
@@ -313,6 +328,8 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
                     ]
                     values.extend(str(p.default_value) for p in method.parameters[count:])
                     values = [qualified_default(value) for value in values]
+                    if pass_lua_state:
+                        values.append("L")
                     call = f"function({', '.join(values)})"
                     statements = [
                         f"{qualified(kind)} output{i}{{}};"
@@ -412,6 +429,7 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
                     "name": namespace,
                     "native": "",
                     "callback_type": "qtluau::" + callback_type,
+                    "pass_lua_state": pass_lua_state,
                     "base": "",
                     "constructible": False,
                     "methods": methods,

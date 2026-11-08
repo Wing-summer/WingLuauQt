@@ -394,11 +394,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=pathlib.Path, required=True)
     parser.add_argument("--out", type=pathlib.Path, required=True)
+    parser.add_argument("--definitions-out", type=pathlib.Path,
+                        help="Emit definitions in the same SDK discovery process")
     args = parser.parse_args()
     try:
         resolved = emit(
             json.loads(args.config.read_text()), args.out.resolve(), args.config.resolve().parent
         )
+        if args.definitions_out is not None:
+            from .generate_definitions import generate
+
+            generate(resolved, args.definitions_out.resolve())
         count = len(
             object_field(object_field(resolved, "qt"), "widgets").get("include", DEFAULT_WIDGETS)
         )

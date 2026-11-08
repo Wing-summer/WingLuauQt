@@ -19,6 +19,7 @@ struct QueuedLuaCallback {
     std::function<void(LuaSignalArguments)> post;
 };
 void setLuaContextResolver(lua_State *L, LuaContextResolver resolver);
+const void *luaContextKey(lua_State *L);
 void clearLuaContext(lua_State *L);
 void registerSignalConnector(lua_State *L, const QMetaObject *meta,
                              SignalConnector connector);

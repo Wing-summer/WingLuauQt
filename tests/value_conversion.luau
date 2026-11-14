@@ -62,10 +62,10 @@ local mapping = variant({first = 1, second = 2}):to_value()
 local sum = 0
 for _, value in pairs(mapping) do sum += value end
 assert(sum == 3)
--- The host VM preserves signed 64-bit integers exactly.
+-- Values outside the safe number range use full-width integer userdata.
 local huge = variant("9223372036854775807", "qlonglong")
 assert(huge:type_name() == "qlonglong")
-assert(type(huge:to_value()) == "integer")
+assert(type(huge:to_value()) == "userdata")
 assert(tostring(huge:to_value()) == "9223372036854775807")
 assert(not pcall(function() combo:add_items({1}) end))
 

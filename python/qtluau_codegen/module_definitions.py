@@ -45,15 +45,18 @@ def split_declarations(source: str) -> tuple[list[str], list[str]]:
             name, base = match.groups()
             if "end" not in lines:
                 raise ValueError(f"Unterminated external type: {name}")
-            members: list[str] = []
+            members: dict[str, list[str]] = {}
             for member in lines[1:lines.index("end")]:
                 function = re.fullmatch(r"\s*function (\w+)\(self(?:, (.*))?\): (.*)", member)
                 if function:
                     method, args, result = function.groups()
                     member = f"    {method}: (self: {name}{', ' + args if args else ''}) -> {result}"
                 if member.strip():
-                    members.append(member.rstrip(",") + ",")
-            types.append(f"type {name} = {base + ' & ' if base else ''}{{\n" + "\n".join(members) + "\n}")
+                    label, signature = member.strip().rstrip(",").split(":", 1)
+                    members.setdefault(label, []).append(signature.strip())
+            fields = [f"    {label}: " + " & ".join(f"({signature})" for signature in dict.fromkeys(signatures)) + ","
+                      for label, signatures in members.items()]
+            types.append(f"type {name} = {base + ' & ' if base else ''}{{\n" + "\n".join(fields) + "\n}")
         elif block.startswith(("type ", "export type ")):
             types.append(block.removeprefix("export "))
         else:
@@ -82,9 +85,14 @@ def module_definitions(
     Raises:
         ValueError: Conflicting type names or public/module names are found.
     """
-    common_types, common_globals = split_declarations((directory / "common.d.luau").read_text())
-    qt_types, qt_globals = split_declarations((directory / "qt.d.luau").read_text())
-    extension_types, _ = split_declarations(definitions(extensions))
+    common_source = (directory / "common.d.luau").read_text()
+    qt_source = (directory / "qt.d.luau").read_text()
+    extension_source = definitions(extensions)
+    nominal_types = set(re.findall(r"^declare extern type (\w+)",
+                        "\n".join([common_source, qt_source, extension_source, *(extra or {}).values()]), re.MULTILINE))
+    common_types, common_globals = split_declarations(common_source)
+    qt_types, qt_globals = split_declarations(qt_source)
+    extension_types, _ = split_declarations(extension_source)
     types = [*common_types, *qt_types, *extension_types]
     modules = {"": common_globals, qt_namespace(naming_config or {}): qt_globals}
     module_types: dict[str, list[str]] = {}
@@ -143,8 +151,8 @@ def module_definitions(
     bundle = files if files is not None else DefinitionFiles()
     declaration_types: dict[str, str] = {}
     for name, source in all_types.items():
-        declaration_types[name] = source if name.startswith("_qt_") else callable_tables(source, declaration_types)
-    result = partition(declaration_types, globals_, entries, bundle, prefix)
+        declaration_types[name] = source if name in nominal_types or name.startswith("_qt_") else callable_tables(source, declaration_types)
+    result = partition(declaration_types, globals_, entries, bundle, prefix, nominal_types)
     emit_symbol_catalog(all_types, value_types, public_names, globals_, bundle, prefix,
                         categories or {}, module_types, declaration_types, naming_config)
     remaining_globals = list(globals_)

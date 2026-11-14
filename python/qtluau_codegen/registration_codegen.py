@@ -226,6 +226,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
             "void registerCommonBindings(lua_State *L) {",
             'RegistrationGuard registration(L, "base.common"); if (!registration) { return; }',
             'if (!L) { throw std::invalid_argument("lua_State is null"); }',
+            "registerInteger64(L);",
         ]
     )
     for name in COMMON_ADAPTERS:

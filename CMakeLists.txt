@@ -9,6 +9,7 @@ option(QTLUAU_BUILD_TESTS "Build runtime and generation tests" ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Dependencies)
 add_library(qtluau_runtime STATIC
+  support/integer64.cpp
   support/execute_luau.cpp
   support/module_registry.cpp)
 include(GenerateBindings)

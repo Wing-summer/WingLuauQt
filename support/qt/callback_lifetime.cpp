@@ -58,6 +58,7 @@ struct ContextObject {
 };
 struct VmResources {
     LuaContextResolver resolver = nullptr;
+    LuaCallbackHooks hooks;
     std::unordered_map<const QMetaObject *, SignalConnector> connectors;
     std::vector<ContextObject> objects;
     std::unordered_map<lua_State *, const void *> callbackContexts;
@@ -114,6 +115,51 @@ void setLuaContextResolver(lua_State *L, LuaContextResolver resolver) {
     std::lock_guard<std::mutex> lock(g_callbackMutex);
     resources->vms[lua_mainthread(L)].resolver = resolver;
 }
+void setLuaCallbackHooks(lua_State *L, LuaCallbackHooks hooks) {
+    std::lock_guard<std::mutex> lock(g_callbackMutex);
+    resources->vms[lua_mainthread(L)].hooks = std::move(hooks);
+}
+
+namespace {
+bool scheduleCallback(const std::shared_ptr<LuaCallbackSlot> &slot,
+                      LuaSignalArguments arguments) {
+    LuaCallbackHooks hooks;
+    {
+        std::lock_guard<std::mutex> lock(g_callbackMutex);
+        if (!slot->callback) {
+            return true;
+        }
+        hooks = resources->vms[lua_mainthread(slot->callback->state())].hooks;
+    }
+    return hooks.schedule &&
+           hooks.schedule(
+               {slot->context, *slot->callback, std::move(arguments),
+                [slot] { return slot->active && slot->callback.has_value(); }});
+}
+
+void deliverCallback(lua_State *owner, std::function<QString()> call) {
+    LuaCallbackHooks hooks;
+    {
+        std::lock_guard<std::mutex> lock(g_callbackMutex);
+        hooks = resources->vms[lua_mainthread(owner)].hooks;
+    }
+    auto job = [hooks, call = std::move(call)] {
+        if (hooks.begin) {
+            hooks.begin();
+        }
+        const auto error = call();
+        if (hooks.end) {
+            hooks.end(error);
+        }
+    };
+    if (hooks.dispatch) {
+        hooks.dispatch(std::move(job));
+    } else {
+        job();
+    }
+}
+} // namespace
+
 void registerSignalConnector(lua_State *L, const QMetaObject *meta,
                              SignalConnector connector) {
     std::lock_guard<std::mutex> lock(g_callbackMutex);
@@ -183,61 +229,98 @@ QueuedLuaCallback makeQueuedLuaCallback(QObject *sender,
                     if (!slot->callback) {
                         return;
                     }
+                    if (scheduleCallback(slot, encode)) {
+                        return;
+                    }
                     auto *owner = slot->callback->state();
-                    auto *main = lua_mainthread(owner);
-                    lua_State *execution = nullptr;
-                    std::optional<luabridge::LuaRef> keepAlive;
-                    try {
-                        // A signal can arrive while its source coroutine is
-                        // yielded. Pin a separate invocation thread without
-                        // changing that stack.
-                        {
-                            const luabridge::StackRestore restoreOwner(owner);
-                            const luabridge::StackRestore restoreMain(main);
-                            execution = lua_newthread(owner);
-                            if (owner != main) {
-                                lua_xmove(owner, main, 1);
+                    deliverCallback(
+                        owner, [slot, encode = std::move(encode)]() -> QString {
+                            if (!slot->callback) {
+                                return QString();
                             }
-                            keepAlive.emplace(
-                                luabridge::LuaRef::fromStack(main, -1));
-                        }
-                        if (!lua_getthreaddata(execution)) {
-                            lua_setthreaddata(execution,
-                                              lua_getthreaddata(owner));
-                        }
-                        {
-                            std::lock_guard<std::mutex> lock(g_callbackMutex);
-                            resources->vms[main].callbackContexts[execution] =
-                                slot->context;
-                        }
-                        auto args = encode(execution);
-                        slot->callback->push(execution);
-                        for (const auto &arg : args) {
-                            arg.push(execution);
-                        }
-                        const int status = lua_pcall(
-                            execution, static_cast<int>(args.size()), 0, 0);
-                        if (status != LUA_OK) {
-                            qWarning() << "Lua signal callback failed:"
-                                       << (status == LUA_YIELD
-                                               ? "Signal callbacks cannot yield"
-                                               : lua_tostring(execution, -1));
-                        }
-                    } catch (const std::exception &error) {
-                        qWarning()
-                            << "Lua signal callback failed:" << error.what();
-                    }
-                    if (execution && keepAlive) {
-                        lua_resetthread(execution);
-                        std::lock_guard<std::mutex> lock(g_callbackMutex);
-                        if (!resources.isDestroyed()) {
-                            const auto vm = resources->vms.find(main);
-                            if (vm != resources->vms.end()) {
-                                vm->second.callbackContexts.erase(execution);
+                            auto *owner = slot->callback->state();
+                            QString failure;
+                            auto *main = lua_mainthread(owner);
+                            lua_State *execution = nullptr;
+                            std::optional<luabridge::LuaRef> keepAlive;
+                            try {
+                                // A signal can arrive while its source
+                                // coroutine is yielded. Pin a separate
+                                // invocation thread without changing that
+                                // stack.
+                                {
+                                    const luabridge::StackRestore restoreOwner(
+                                        owner);
+                                    const luabridge::StackRestore restoreMain(
+                                        main);
+                                    execution = lua_newthread(owner);
+                                    if (owner != main) {
+                                        lua_xmove(owner, main, 1);
+                                    }
+                                    keepAlive.emplace(
+                                        luabridge::LuaRef::fromStack(main, -1));
+                                }
+                                if (!lua_getthreaddata(execution)) {
+                                    lua_setthreaddata(execution,
+                                                      lua_getthreaddata(owner));
+                                }
+                                {
+                                    std::lock_guard<std::mutex> lock(
+                                        g_callbackMutex);
+                                    resources->vms[main]
+                                        .callbackContexts[execution] =
+                                        slot->context;
+                                }
+                                auto args = encode(execution);
+                                slot->callback->push(execution);
+                                for (const auto &arg : args) {
+                                    arg.push(execution);
+                                }
+                                const int status = lua_pcall(
+                                    execution, static_cast<int>(args.size()), 0,
+                                    0);
+                                if (status != LUA_OK) {
+                                    failure =
+                                        status == LUA_YIELD
+                                            ? QStringLiteral("Signal callbacks "
+                                                             "cannot yield")
+                                            : QString::fromUtf8(
+                                                  lua_tostring(execution, -1));
+                                    if (failure.isEmpty()) {
+                                        failure = QStringLiteral(
+                                            "Lua signal callback failed");
+                                    }
+                                    qWarning()
+                                        << "Lua signal callback failed:"
+                                        << (status == LUA_YIELD
+                                                ? "Signal callbacks cannot "
+                                                  "yield"
+                                                : lua_tostring(execution, -1));
+                                }
+                            } catch (const std::exception &error) {
+                                failure = QString::fromUtf8(error.what());
+                                if (failure.isEmpty()) {
+                                    failure = QStringLiteral(
+                                        "Lua signal callback failed");
+                                }
+                                qWarning() << "Lua signal callback failed:"
+                                           << error.what();
                             }
-                        }
-                    }
-                    keepAlive.reset();
+                            if (execution && keepAlive) {
+                                lua_resetthread(execution);
+                                std::lock_guard<std::mutex> lock(
+                                    g_callbackMutex);
+                                if (!resources.isDestroyed()) {
+                                    const auto vm = resources->vms.find(main);
+                                    if (vm != resources->vms.end()) {
+                                        vm->second.callbackContexts.erase(
+                                            execution);
+                                    }
+                                }
+                            }
+                            keepAlive.reset();
+                            return failure;
+                        });
                 });
         }};
 }
@@ -250,17 +333,34 @@ std::function<void()> makeLuaCallback(luabridge::LuaRef callback) {
         if (!slot->callback) {
             return;
         }
-        try {
-            auto result = (*slot->callback)();
-            if (!result) {
-                qWarning() << "Lua callback failed:"
-                           << result.message().c_str();
-            }
-        } catch (const std::exception &error) {
-            qWarning() << "Lua callback failed:" << error.what();
-        } catch (...) {
-            qWarning() << "Lua callback failed with an unknown exception";
+        if (scheduleCallback(slot, [](lua_State *) {
+                return std::vector<luabridge::LuaRef>{};
+            })) {
+            return;
         }
+        deliverCallback(slot->callback->state(), [slot]() -> QString {
+            if (!slot->callback) {
+                return {};
+            }
+            try {
+                auto result = (*slot->callback)();
+                if (!result) {
+                    auto error = QString::fromStdString(result.message());
+                    if (error.isEmpty()) {
+                        error = QStringLiteral("Lua callback failed");
+                    }
+                    qWarning() << "Lua callback failed:" << error;
+                    return error;
+                }
+            } catch (const std::exception &error) {
+                qWarning() << "Lua callback failed:" << error.what();
+                return QString::fromUtf8(error.what());
+            } catch (...) {
+                return QStringLiteral(
+                    "Lua callback failed with an unknown exception");
+            }
+            return {};
+        });
     };
 }
 void connectLuaSignal(QObject *sender, QAnyStringView signal,

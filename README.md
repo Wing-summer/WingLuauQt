@@ -75,7 +75,7 @@ ctest --test-dir build --output-on-failure
 .venv/bin/python -m ruff check python tests/python examples/run.py
 ```
 
-CMake reuses a compatible Python 3.12+ environment or creates `build/.wingluauqt-venv` with tsujikiri 0.32.0 (and developer checks when tests are enabled). Set `Python3_EXECUTABLE` to reuse your own environment; `WINGLUAUQT_PYTHON_ENV` selects a local environment directory and `WINGLUAUQT_BOOTSTRAP_PYTHON=OFF` requires dependencies to be installed beforehand.
+CMake reuses a compatible Python 3.12+ environment or creates `build/.wingluauqt-venv` with tsujikiri 0.33.0 (and developer checks when tests are enabled). Set `Python3_EXECUTABLE` to reuse your own environment; `WINGLUAUQT_PYTHON_ENV` selects a local environment directory and `WINGLUAUQT_BOOTSTRAP_PYTHON=OFF` requires dependencies to be installed beforehand.
 
 CMake 优先复用依赖完整的 Python 3.12+ 环境，否则自动准备构建目录内的虚拟环境。可指定解释器、环境目录或关闭自动安装；开启测试时同时准备 Pyright/Ruff。手动创建 `.venv` 的开发方式仍然可用。
 

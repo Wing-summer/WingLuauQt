@@ -3,26 +3,34 @@
 // See LICENSE in the project root for license information.
 
 #include "qtluau/value_conversion.hpp"
-#include "qtluau/widget_wrappers.hpp"
-#include <QColor>
-#include <QFont>
+
 #include <cmath>
 #include <limits>
 #include <set>
 
+#include <QColor>
+#include <QFont>
+
+#include "qtluau/widget_wrappers.hpp"
+
 namespace qtluau {
 namespace {
 char nullToken;
+
 struct StackRestore {
   lua_State *L;
   int top;
+
   explicit StackRestore(lua_State *state) : L(state), top(lua_gettop(state)) {}
+
   ~StackRestore() { lua_settop(L, top); }
 };
+
 struct ReadContext {
   std::set<const void *> active;
   size_t nodes = 0;
 };
+
 QVariant read(lua_State *L, int index, ReadContext &context, int depth) {
   if (depth > 64 || ++context.nodes > 100000) {
     throw std::invalid_argument("Qt value exceeds conversion limits");
@@ -36,10 +44,6 @@ QVariant read(lua_State *L, int index, ReadContext &context, int depth) {
     return {};
   case LUA_TBOOLEAN:
     return bool(lua_toboolean(L, index));
-#ifdef lua_isinteger64
-  case LUA_TINTEGER:
-    return QVariant::fromValue<qlonglong>(lua_tointeger64(L, index, nullptr));
-#endif
   case LUA_TNUMBER: {
     const double value = lua_tonumber(L, index);
     if (!std::isfinite(value)) {
@@ -113,6 +117,16 @@ QVariant read(lua_State *L, int index, ReadContext &context, int depth) {
     return list;
   }
   case LUA_TUSERDATA: {
+    if (isUnsignedInteger64(L, index)) {
+      std::uint64_t value = 0;
+      readUnsignedInteger64(L, index, value);
+      return QVariant::fromValue<qulonglong>(value);
+    }
+    if (isInteger64(L, index)) {
+      std::int64_t value = 0;
+      readInteger64(L, index, value);
+      return QVariant::fromValue<qlonglong>(value);
+    }
     auto value = luabridge::LuaRef::fromStack(L, index);
     if (auto box = value.cast<VariantBox>()) {
       return box->value;
@@ -134,6 +148,7 @@ QVariant read(lua_State *L, int index, ReadContext &context, int depth) {
   }
   throw std::invalid_argument("Unsupported Luau value for QVariant");
 }
+
 void push(lua_State *L, const QVariant &value, int depth, size_t &nodes) {
   if (depth > 64 || ++nodes > 100000) {
     throw std::invalid_argument("Qt value exceeds conversion limits");
@@ -167,31 +182,18 @@ void push(lua_State *L, const QVariant &value, int depth, size_t &nodes) {
                 value.metaType().id() == QMetaType::ULong
             ? static_cast<long double>(value.toULongLong())
             : static_cast<long double>(value.toLongLong());
-#ifdef lua_isinteger64
-    if (value.metaType().id() != QMetaType::LongLong &&
-        value.metaType().id() != QMetaType::ULongLong &&
-        value.metaType().id() != QMetaType::Long &&
-        value.metaType().id() != QMetaType::ULong) {
-      lua_pushnumber(L, static_cast<double>(number));
-      return;
-    }
-    if (number > static_cast<long double>(std::numeric_limits<qint64>::max())) {
-      auto result = luabridge::Stack<VariantBox>::push(L, VariantBox{value});
-      if (!result) {
-        throw std::invalid_argument(result.message());
+    if (number < -static_cast<long double>(MaxSafeInteger) ||
+        number > static_cast<long double>(MaxSafeInteger)) {
+      if (value.metaType().id() == QMetaType::ULongLong ||
+          value.metaType().id() == QMetaType::ULong) {
+        pushUnsignedInteger64(L, value.toULongLong());
+      } else {
+        pushInteger64(L, value.toLongLong());
       }
       return;
     }
-    lua_pushinteger64(L, value.toLongLong());
-    return;
-#else
-    if (std::abs(number) > 9007199254740991.0L) {
-      throw std::invalid_argument("Qt integer cannot be represented exactly by "
-                                  "a Luau number; keep it boxed");
-    }
     lua_pushnumber(L, static_cast<double>(number));
     return;
-#endif
   }
   case QMetaType::Float:
   case QMetaType::Double:
@@ -282,7 +284,9 @@ void push(lua_State *L, const QVariant &value, int depth, size_t &nodes) {
   }
 }
 } // namespace
+
 void pushNullValue(lua_State *L) { lua_pushlightuserdata(L, &nullToken); }
+
 QVariant variantFromLua(const luabridge::LuaRef &value) {
   lua_State *L = value.state();
   StackRestore restore(L);
@@ -290,12 +294,14 @@ QVariant variantFromLua(const luabridge::LuaRef &value) {
   ReadContext context;
   return read(L, -1, context, 0);
 }
+
 luabridge::LuaRef variantToLua(lua_State *L, const QVariant &value) {
   StackRestore restore(L);
   size_t nodes = 0;
   push(L, value, 0, nodes);
   return luabridge::LuaRef::fromStack(L, -1);
 }
+
 QByteArray LuaCodec<QByteArray>::read(const luabridge::LuaRef &value) {
   if (value.isString()) {
     const auto bytes = value.unsafe_cast<std::string>();
@@ -306,10 +312,12 @@ QByteArray LuaCodec<QByteArray>::read(const luabridge::LuaRef &value) {
   }
   throw std::invalid_argument("Expected binary string element");
 }
+
 luabridge::LuaRef LuaCodec<QByteArray>::write(lua_State *L,
                                               const QByteArray &value) {
   return luabridge::LuaRef(L, std::string(value.constData(), value.size()));
 }
+
 QString LuaCodec<QString>::read(const luabridge::LuaRef &value) {
   if (value.isString()) {
     return toQString(value.unsafe_cast<std::string>());
@@ -319,6 +327,7 @@ QString LuaCodec<QString>::read(const luabridge::LuaRef &value) {
   }
   throw std::invalid_argument("Expected string element");
 }
+
 luabridge::LuaRef LuaCodec<QString>::write(lua_State *L, const QString &value) {
   return luabridge::LuaRef(L, toUtf8String(value));
 }

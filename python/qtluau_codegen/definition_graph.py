@@ -66,12 +66,14 @@ def components(graph: dict[str, set[str]]) -> list[list[str]]:
     return result
 
 
-def declaration(source: str) -> str:
+def declaration(source: str, nominal_types: set[str] | None = None) -> str:
     """Preserve native userdata identity with nominal rather than structural types."""
-    match = re.fullmatch(r"type ((?:_qt_|__WingLuauQtCallable_)\w+) = (?:(\w+) & )?\{(.*)\}", source, re.DOTALL)
+    match = re.fullmatch(r"type (\w+) = (?:(\w+) & )?\{(.*)\}", source, re.DOTALL)
     if not match:
         return "export " + source
     name, base, members = match.groups()
+    if name not in (nominal_types or set()) and not name.startswith(("_qt_", "__WingLuauQtCallable_")):
+        return "export " + source
     parent = " extends " + base if base else ""
     fields: list[str] = []
     for item in table_fields(members):
@@ -83,7 +85,7 @@ def declaration(source: str) -> str:
 
 def partition(
     types: dict[str, str], public: list[str], entries: dict[str, str],
-    files: DefinitionFiles, prefix: str,
+    files: DefinitionFiles, prefix: str, nominal_types: set[str] | None = None,
 ) -> dict[str, str]:
     """Emit ambient dependencies once and ordinary module shards for private types."""
     names = set(types)
@@ -119,7 +121,7 @@ def partition(
             imports.extend(f'local {label} = require("./{module}")' for module, label in labels.items())
             imports.extend(f"type {name} = {labels[owner[name]]}.{name}" for name in dependencies if name not in needed)
         source = "\n".join(["--!strict", "-- Generated type component.", *imports,
-                              *(declaration(types[name]) for name in ordered)]) + "\n"
+                              *(declaration(types[name], nominal_types) for name in ordered)]) + "\n"
         if ambient:
             files.preload.append(filename)
         else:

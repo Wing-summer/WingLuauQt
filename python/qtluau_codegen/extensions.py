@@ -20,6 +20,7 @@ from .assets import support_root
 from .class_codegen import render_members
 from .discovery import discover_sdk
 from .exclusions import excluded_method
+from .luau_definitions import class_definition
 from .member_scan import scan_members
 from .models import JsonObject, object_field, object_list_field, string_list_field
 from .type_policy import KEYWORDS
@@ -430,24 +431,14 @@ def definitions(entries: list[JsonObject]) -> str:
             )
             continue
         alias = f"_ext_{namespace}_{name}"
-        base = " extends _qt_QWidget" if entry["base"] == "QWidget" else ""
-        lines.append(f"declare extern type {alias}{base} with")
-        groups: dict[str, list[str]] = {}
-        for method in object_list_field(entry, "methods"):
-            params = ", ".join(
-                f"arg{i}: {t}" for i, t in enumerate(string_list_field(method, "parameters"))
-            )
-            groups.setdefault(method["name"], []).append(
-                f"((self: {alias}{', ' if params else ''}{params}) -> {method['result']})"
-            )
-        for method, overloads in groups.items():
-            lines.append(f"    {method}: " + " & ".join(overloads))
-        for prop in object_list_field(entry, "properties"):
-            field = str(prop["name"])
-            if field in KEYWORDS:
-                field = "[" + json.dumps(field) + "]"
-            lines.append(f"    {field}: {prop['type']}")
-        lines.append("end")
+        methods = [
+            (method["name"], [(f"arg{i}", kind) for i, kind in enumerate(string_list_field(method, "parameters"))],
+             str(method["result"]))
+            for method in object_list_field(entry, "methods")
+        ]
+        fields = [(str(prop["name"]), str(prop["type"])) for prop in object_list_field(entry, "properties")]
+        lines.append(class_definition(alias, methods,
+                     "_qt_QWidget" if entry["base"] == "QWidget" else None, fields))
         constructor = f"(() -> {alias})" if entry["constructible"] else "{}"
         namespaces.setdefault(namespace, []).append(f"    {name}: {constructor},")
     for namespace, fields in namespaces.items():

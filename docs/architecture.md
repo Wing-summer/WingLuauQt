@@ -6,7 +6,7 @@ WingLuauQt 是未发布的 Qt/Luau 静态库工程生成器。Python 根据 Qt S
 
 ## Discovery and generation / 发现与生成
 
-- `discovery.py`, `selection.py`, `api_baseline.py`: SDK discovery through tsujikiri 0.32.0, inheritance selection, exclusions, dependencies and API version filtering.
+- `discovery.py`, `selection.py`, `api_baseline.py`: SDK discovery through tsujikiri 0.33.0, inheritance selection, exclusions, dependencies and API version filtering.
 - `member_scan.py`, `class_codegen.py`, `extensions.py`: QObject extensions, visibility, properties, friend access and exposed bases.
 - `registration_codegen.py`: concrete registration statements selected at generation time.
 - `qt_pipeline.py`: native method bindings, default argument overloads and typed child lookup generated from SDK discovery. Generic templates carry native widget and layout references.
@@ -47,3 +47,7 @@ CTest 覆盖生成注册、接收者错误、排除规则、定义、扩展、�
 Widgets and borrowed QObject values expose `connect(signal, callback)`. Use a Qt signal name or its full signature for overloaded signals, for example `button:connect("clicked", function() end)`. The current bridge invokes callbacks without signal arguments. QObject references check deletion and thread affinity; callbacks are released before the Luau state closes.
 
 控件与借用的 QObject 值提供 connect(signal, callback)。使用 Qt 信号名称，重载信号则使用完整签名，例如 button:connect("clicked", function() end)。当前桥接调用回调时不传信号参数；对象引用检查删除状态及线程，回调在 Luau 状态关闭前释放。
+
+`luau_definitions.py` adapts selected, already-mapped signatures to tsujikiri's public TIR and built-in `luau` format. It does not reparse headers or copy the upstream template. `module_definitions.py` retains overload intersections while partitioning nominal types and module globals.
+
+`luau_definitions.py` 将已筛选及完成类型映射的签名交给 tsujikiri 公共 TIR 和内置 `luau` 格式，不重新解析头文件，也不复制上游模板。`module_definitions.py` 在拆分具名类型及模块全局值时保留重载交集。

@@ -80,6 +80,7 @@ add_test(NAME definition_luau_usage COMMAND QtLuauDefinitionTests
   "${PROJECT_BINARY_DIR}/definitions/qtluau.d.luau" "--probe=${CMAKE_CURRENT_SOURCE_DIR}/definition_usage.luau")
 set_tests_properties(definition_luau_syntax definition_luau_usage PROPERTIES DEPENDS definition_generator)
 qtluau_python_test(qt_discovery_pipeline test_qt_pipeline)
+qtluau_python_test(native_luau_definitions test_luau_definitions)
 qtluau_python_test(luau_luabridge_header_order test_luau_header_order --root "${PROJECT_SOURCE_DIR}")
 foreach(fixture IN ITEMS definition_variadics member_exclusions class_exclusions selection_boundary default_ctor_exclusion)
   if(fixture STREQUAL "definition_variadics")

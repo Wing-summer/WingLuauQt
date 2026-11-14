@@ -13,3 +13,7 @@ Python 生成可选框架值绑定、模块注册及 Luau 定义；值接口通�
 CMake configure reuses content-validated generated projects and regenerates missing or modified artifacts. Standalone runtime/declaration generation shares one SDK scan process.
 
 CMake 配置复用经过内容校验的生成工程，产物缺失或变化时重新生成；独立运行时／定义生成共享同一 SDK 扫描进程。
+
+Common bindings provide checked `int64` / `uint64` userdata and lossless native integer conversions, registered once per VM.
+
+通用绑定提供带溢出检查的 `int64` / `uint64` userdata 和无损原生整数转换，每个 VM 仅注册一次。

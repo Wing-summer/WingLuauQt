@@ -16,7 +16,6 @@
 #include <iterator>
 #include <vector>
 
-LUAU_FASTFLAG(LuauIntegerType2)
 
 struct ProbeResolver : Luau::NullFileResolver {
     std::string probe;
@@ -28,7 +27,6 @@ struct ProbeResolver : Luau::NullFileResolver {
 
 int main(int argc, char** argv)
 {
-    FFlag::LuauIntegerType2.value = true;
     std::string probePath;
     int lastDefinition = 0;
     bool merge = false;

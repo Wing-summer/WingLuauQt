@@ -63,7 +63,7 @@ assert(data.tags[2] == "b")
 
 C++ 的 begin/end、cbegin/cend、反向迭代器和 iterator 签名不导出。容器是独立快照：修改返回的 table 不会隐式修改 Qt 对象；通过 setter 或方法参数显式写回。table 的元表、对象身份与共享子表身份不跨边界保留。
 
-输入序列必须连续且没有空洞；映射必须只有字符串键。混合数字/字符串键、其他键类型、循环 table、函数、线程和未支持的 userdata 会报错。一次转换最多递归 64 层、100000 个值。支持原生 int64 的宿主 Luau 保留有符号 64 位整数；更大的 uint64 保持 QVariant 包装。标准 Luau 对无法精确表示的整数拒绝拆箱。
+输入序列必须连续且没有空洞；映射必须只有字符串键。混合数字/字符串键、其他键类型、循环 table、函数、线程和未支持的 userdata 会报错。一次转换最多递归 64 层、100000 个值。通用注册提供 `int64` / `uint64` userdata：超过普通 number 安全整数范围的原生整数保留完整 64 位，Qt 容器与 QVariant 往返转换不会经过 double。
 
 ## QVariant：自动拆装箱与显式保留类型
 
@@ -94,7 +94,7 @@ assert(copy.answer == 42)
 local emptyMap = variant({}, "QVariantMap")
 local bytes = variant(bytearray("a\0\255"))
 local exact = variant("9223372036854775807", "qlonglong")
--- 原生 int64 Luau 可精确拆箱；标准 Luau 超出 number 精度范围时拒绝拆箱。
+-- 超出 number 安全范围时，to_value() 返回完整位宽的 int64 / uint64 userdata。
 ```
 
 QVariant 包装提供 `is_valid()`、`is_null()`、`type_name()`、`to_value()`，不暴露任意 Qt 类型转换、裸指针或 QObject*。目前支持显式请求 bool、int、uint、qlonglong、qulonglong、double、QString、QByteArray、QStringList、QVariantList、QVariantMap、QColor、QFont。未知 metatype 会报错，新增 Qt 值类型需同时增加绑定和 QVariant 转换后端。
@@ -107,4 +107,8 @@ QVariant 包装提供 `is_valid()`、`is_null()`、`type_name()`、`to_value()`�
 
 Use canonical Qt type names under `common.types` for aliases, enabled state and method selection. QString remains `ustring` with explicit UTF-8 conversion. Ordinary lists and maps convert to detached Luau tables; C++ iterators and container aliases are not exposed. Naming follows the configured native or snake_case policy.
 
-QVariant preserves explicit native types when boxed. Null elements use the shared sentinel. Containers reject cycles, unsupported keys and unsupported userdata, and have depth/value limits. Integer behavior depends on the host Luau: native int64 preserves signed 64-bit values and larger unsigned values stay boxed; standard Luau rejects values outside exact number precision.
+QVariant preserves explicit native types when boxed. Null elements use the shared sentinel. Containers reject cycles, unsupported keys and unsupported userdata, and have depth/value limits. Common registration supplies `int64` / `uint64` userdata. Native integers outside the safe number range retain all 64 bits across QVariant and typed-container conversions.
+
+Construct full-width integers with strings, such as `int64("-9223372036854775808")` and `uint64("0xffffffffffffffff")`. Arithmetic checks overflow; `to_number()` rejects precision loss. `Int64` and `UInt64` are aliases of the common `Integer64` declaration so Luau can compare both domains; runtime constructors and conversions check their signed ranges. Registration is once per VM, independent of Qt module loading.
+
+完整位宽数值应使用字符串构造，例如 `int64("-9223372036854775808")` 和 `uint64("0xffffffffffffffff")`。算术检查溢出，`to_number()` 拒绝精度损失。`Int64` 和 `UInt64` 在声明中共享通用 `Integer64` 类型，以支持跨域比较；构造及转换时仍按有符号/无符号范围检查。每个 VM 只注册一次，不依赖 Qt 模块加载。

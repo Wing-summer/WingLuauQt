@@ -5,6 +5,7 @@
 #ifndef QTLUAU_INCLUDE_QTLUAU_VALUE_CONVERSION_HPP
 #define QTLUAU_INCLUDE_QTLUAU_VALUE_CONVERSION_HPP
 #include "qtluau/bindings.hpp"
+#include "qtluau/integer64.hpp"
 #include "qtluau/qobject_value.hpp"
 #include "qtluau/widget_wrappers.hpp"
 #include <QFlags>
@@ -30,144 +31,180 @@ luabridge::LuaRef variantToLua(lua_State *L, const QVariant &value);
 void pushNullValue(lua_State *L);
 
 template <class T, class Enable = void> struct LuaCodec {
-  static T read(const luabridge::LuaRef &value) {
-    auto result = value.template cast<T>();
-    if (!result) {
-      throw std::invalid_argument("Expected registered Qt value type");
+    inline static T read(const luabridge::LuaRef &value) {
+        auto result = value.template cast<T>();
+        if (!result) {
+            throw std::invalid_argument("Expected registered Qt value type");
+        }
+        return *result;
     }
-    return *result;
-  }
-  static luabridge::LuaRef write(lua_State *L, const T &value) {
-    return luabridge::LuaRef(L, value);
-  }
+
+    inline static luabridge::LuaRef write(lua_State *L, const T &value) {
+        return luabridge::LuaRef(L, value);
+    }
 };
 template <class T>
 struct LuaCodec<T *, std::enable_if_t<std::is_base_of_v<QObject, T>>> {
-  static T *read(const luabridge::LuaRef &value) {
-    if (value.isNil()) {
-      return nullptr;
+    inline static T *read(const luabridge::LuaRef &value) {
+        if (value.isNil()) {
+            return nullptr;
+        }
+        QObject *object = nullptr;
+        if (auto native = value.template cast<QObjectRef>()) {
+            if constexpr (!std::is_const_v<T>) {
+                native->requireWritable();
+            }
+            object = native->get();
+        } else if (auto widget = value.template cast<QtWidgetRef>()) {
+            object = widget->get();
+        } else if (auto layout = value.template cast<QtLayoutRef>()) {
+            object = layout->get();
+        }
+        auto *converted = qobject_cast<T *>(object);
+        if (!converted) {
+            throw std::invalid_argument("Incompatible QObject argument");
+        }
+        return converted;
     }
-    QObject *object = nullptr;
-    if (auto native = value.template cast<QObjectRef>()) {
-      if constexpr (!std::is_const_v<T>) { native->requireWritable(); }
-      object = native->get();
-    } else if (auto widget = value.template cast<QtWidgetRef>()) {
-      object = widget->get();
-    } else if (auto layout = value.template cast<QtLayoutRef>()) {
-      object = layout->get();
+
+    inline static luabridge::LuaRef write(lua_State *L, T *value,
+                                          bool owned = false) {
+        if (!value) {
+            return luabridge::LuaRef(L);
+        }
+        if constexpr (std::is_base_of_v<QWidget, T>) {
+            pushQtWidget(L, value, owned);
+            auto result = luabridge::LuaRef::fromStack(L, -1);
+            lua_pop(L, 1);
+            return result;
+        } else if constexpr (std::is_base_of_v<QLayout, T>) {
+            return luabridge::LuaRef(L, QtLayoutRef(value, owned));
+        } else {
+            return luabridge::LuaRef(L, QObjectRef(value, owned));
+        }
     }
-    auto *converted = qobject_cast<T *>(object);
-    if (!converted) {
-      throw std::invalid_argument("Incompatible QObject argument");
-    }
-    return converted;
-  }
-  static luabridge::LuaRef write(lua_State *L, T *value, bool owned = false) {
-    if (!value) {
-      return luabridge::LuaRef(L);
-    }
-    if constexpr (std::is_base_of_v<QWidget, T>) {
-      pushQtWidget(L, value, owned);
-      auto result = luabridge::LuaRef::fromStack(L, -1);
-      lua_pop(L, 1);
-      return result;
-    } else if constexpr (std::is_base_of_v<QLayout, T>) {
-      return luabridge::LuaRef(L, QtLayoutRef(value, owned));
-    } else {
-      return luabridge::LuaRef(L, QObjectRef(value, owned));
-    }
-  }
 };
 template <class T>
 struct LuaCodec<T, std::enable_if_t<std::is_arithmetic_v<T>>> {
-  static T read(const luabridge::LuaRef &value) {
-    if constexpr (std::is_same_v<T, bool>) {
-      if (!value.isBool()) {
-        throw std::invalid_argument("Expected boolean container element");
-      }
-      return value.template unsafe_cast<bool>();
-    } else {
-#ifdef lua_isinteger64
-      if constexpr (std::is_integral_v<T>) {
-        value.push();
-        const bool integer = lua_isinteger64(value.state(), -1);
-        const qint64 number =
-            integer ? lua_tointeger64(value.state(), -1, nullptr) : 0;
-        lua_pop(value.state(), 1);
-        if (integer) {
-          if (static_cast<long double>(number) <
-                  std::numeric_limits<T>::lowest() ||
-              static_cast<long double>(number) >
-                  std::numeric_limits<T>::max()) {
-            throw std::invalid_argument("Integer is outside the target range");
-          }
-          return static_cast<T>(number);
-        }
-        if constexpr (std::is_unsigned_v<T>) {
-          if (value.template isInstance<VariantBox>()) {
-            auto boxed = value.template cast<VariantBox>();
-            if (boxed->value.metaType().id() != QMetaType::ULongLong ||
-                boxed->value.toULongLong() > std::numeric_limits<T>::max()) {
-              throw std::invalid_argument(
-                  "Expected an unsigned integer variant in range");
+    inline static T read(const luabridge::LuaRef &value) {
+        if constexpr (std::is_same_v<T, bool>) {
+            if (!value.isBool()) {
+                throw std::invalid_argument(
+                    "Expected boolean container element");
             }
-            return static_cast<T>(boxed->value.toULongLong());
-          }
+            return value.template unsafe_cast<bool>();
+        } else {
+            if constexpr (std::is_integral_v<T>) {
+                value.push();
+                std::int64_t signedValue = 0;
+                std::uint64_t unsignedValue = 0;
+                const bool signedInteger =
+                    readInteger64(value.state(), -1, signedValue);
+                const bool unsignedInteger =
+                    readUnsignedInteger64(value.state(), -1, unsignedValue);
+                const bool wideInteger = isInteger64(value.state(), -1);
+                lua_pop(value.state(), 1);
+                if (wideInteger) {
+                    if constexpr (std::is_signed_v<T>) {
+                        if (signedInteger &&
+                            signedValue >= std::numeric_limits<T>::lowest() &&
+                            signedValue <= std::numeric_limits<T>::max()) {
+                            return static_cast<T>(signedValue);
+                        }
+                    } else if (unsignedInteger &&
+                               unsignedValue <= std::numeric_limits<T>::max()) {
+                        return static_cast<T>(unsignedValue);
+                    }
+                    throw std::invalid_argument(
+                        "Integer is outside the target range");
+                }
+                if (value.template isInstance<VariantBox>()) {
+                    const auto boxed = value.template cast<VariantBox>();
+                    const auto type = boxed->value.metaType().id();
+                    if (type == QMetaType::ULongLong ||
+                        type == QMetaType::ULong) {
+                        const auto number = boxed->value.toULongLong();
+                        if (number <= static_cast<qulonglong>(
+                                          std::numeric_limits<T>::max())) {
+                            return static_cast<T>(number);
+                        }
+                    } else if (type == QMetaType::LongLong ||
+                               type == QMetaType::Long) {
+                        const auto number = boxed->value.toLongLong();
+                        if constexpr (std::is_signed_v<T>) {
+                            if (number >= std::numeric_limits<T>::lowest() &&
+                                number <= std::numeric_limits<T>::max()) {
+                                return static_cast<T>(number);
+                            }
+                        } else if (number >= 0 &&
+                                   static_cast<qulonglong>(number) <=
+                                       std::numeric_limits<T>::max()) {
+                            return static_cast<T>(number);
+                        }
+                    }
+                    throw std::invalid_argument(
+                        "Integer variant is outside the target range");
+                }
+            }
+            if (!value.isNumber()) {
+                throw std::invalid_argument(
+                    "Expected numeric container element");
+            }
+            const double number = value.template unsafe_cast<double>();
+            if (!std::isfinite(number)) {
+                throw std::invalid_argument("Non-finite container element");
+            }
+            if constexpr (std::is_integral_v<T>) {
+                if (std::floor(number) != number ||
+                    std::abs(number) > static_cast<double>(MaxSafeInteger) ||
+                    static_cast<long double>(number) <
+                        std::numeric_limits<T>::lowest() ||
+                    static_cast<long double>(number) >
+                        std::numeric_limits<T>::max()) {
+                    throw std::invalid_argument(
+                        "Container integer is out of range or not exact");
+                }
+            } else if (std::abs(static_cast<long double>(number)) >
+                       std::numeric_limits<T>::max()) {
+                throw std::invalid_argument("Container number is out of range");
+            }
+            return static_cast<T>(number);
         }
-      }
-#endif
-      if (!value.isNumber()) {
-        throw std::invalid_argument("Expected numeric container element");
-      }
-      const double number = value.template unsafe_cast<double>();
-      if (!std::isfinite(number)) {
-        throw std::invalid_argument("Non-finite container element");
-      }
-      if constexpr (std::is_integral_v<T>) {
-        if (std::floor(number) != number ||
-            std::abs(number) > 9007199254740991.0 ||
-            static_cast<long double>(number) <
-                std::numeric_limits<T>::lowest() ||
-            static_cast<long double>(number) > std::numeric_limits<T>::max()) {
-          throw std::invalid_argument(
-              "Container integer is out of range or not exact");
-        }
-      } else if (std::abs(static_cast<long double>(number)) >
-                 std::numeric_limits<T>::max()) {
-        throw std::invalid_argument("Container number is out of range");
-      }
-      return static_cast<T>(number);
     }
-  }
-  static luabridge::LuaRef write(lua_State *L, T value) {
-    return variantToLua(L, QVariant::fromValue(value));
-  }
+
+    inline static luabridge::LuaRef write(lua_State *L, T value) {
+        return variantToLua(L, QVariant::fromValue(value));
+    }
 };
 template <> struct LuaCodec<QVariant> {
-  static QVariant read(const luabridge::LuaRef &value) {
-    return variantFromLua(value);
-  }
-  static luabridge::LuaRef write(lua_State *L, const QVariant &value) {
-    return variantToLua(L, value);
-  }
+    inline static QVariant read(const luabridge::LuaRef &value) {
+        return variantFromLua(value);
+    }
+
+    inline static luabridge::LuaRef write(lua_State *L, const QVariant &value) {
+        return variantToLua(L, value);
+    }
 };
 template <class T> struct LuaCodec<T, std::enable_if_t<std::is_enum_v<T>>> {
-  static T read(const luabridge::LuaRef &value) {
-    return static_cast<T>(LuaCodec<std::underlying_type_t<T>>::read(value));
-  }
-  static luabridge::LuaRef write(lua_State *L, T value) {
-    return LuaCodec<std::underlying_type_t<T>>::write(
-        L, static_cast<std::underlying_type_t<T>>(value));
-  }
+    inline static T read(const luabridge::LuaRef &value) {
+        return static_cast<T>(LuaCodec<std::underlying_type_t<T>>::read(value));
+    }
+
+    inline static luabridge::LuaRef write(lua_State *L, T value) {
+        return LuaCodec<std::underlying_type_t<T>>::write(
+            L, static_cast<std::underlying_type_t<T>>(value));
+    }
 };
 template <class Enum> struct LuaCodec<QFlags<Enum>> {
-  using Flags = QFlags<Enum>;
-  static Flags read(const luabridge::LuaRef &value) {
-    return Flags::fromInt(LuaCodec<typename Flags::Int>::read(value));
-  }
-  static luabridge::LuaRef write(lua_State *L, Flags value) {
-    return LuaCodec<typename Flags::Int>::write(L, value.toInt());
-  }
+    using Flags = QFlags<Enum>;
+
+    inline static Flags read(const luabridge::LuaRef &value) {
+        return Flags::fromInt(LuaCodec<typename Flags::Int>::read(value));
+    }
+
+    inline static luabridge::LuaRef write(lua_State *L, Flags value) {
+        return LuaCodec<typename Flags::Int>::write(L, value.toInt());
+    }
 };
 template <> struct LuaCodec<QString> {
   static QString read(const luabridge::LuaRef &value);
@@ -178,7 +215,7 @@ template <> struct LuaCodec<QByteArray> {
   static luabridge::LuaRef write(lua_State *L, const QByteArray &value);
 };
 template <class T> struct LuaCodec<QList<T>> {
-    static QList<T> read(const luabridge::LuaRef &value) {
+    inline static QList<T> read(const luabridge::LuaRef &value) {
         if (!value.isTable()) {
             throw std::invalid_argument("Expected dense sequence table");
         }
@@ -205,7 +242,8 @@ template <class T> struct LuaCodec<QList<T>> {
         }
         return result;
     }
-    static luabridge::LuaRef write(lua_State *L, const QList<T> &value) {
+
+    inline static luabridge::LuaRef write(lua_State *L, const QList<T> &value) {
         auto result = luabridge::LuaRef::newTable(L);
         int index = 1;
         for (const T &entry : value) {
@@ -214,9 +252,8 @@ template <class T> struct LuaCodec<QList<T>> {
         return result;
     }
 };
-template <class T>
-struct LuaCodec<QMap<QString, T>> {
-    static QMap<QString, T> read(const luabridge::LuaRef &value) {
+template <class T> struct LuaCodec<QMap<QString, T>> {
+    inline static QMap<QString, T> read(const luabridge::LuaRef &value) {
         if (!value.isTable()) {
             throw std::invalid_argument("Expected string-keyed map table");
         }
@@ -233,8 +270,9 @@ struct LuaCodec<QMap<QString, T>> {
         }
         return result;
     }
-    static luabridge::LuaRef write(lua_State *L,
-                                   const QMap<QString, T> &value) {
+
+    inline static luabridge::LuaRef write(lua_State *L,
+                                          const QMap<QString, T> &value) {
         auto result = luabridge::LuaRef::newTable(L);
         for (auto it = value.begin(); it != value.end(); ++it) {
             const QByteArray key = it.key().toUtf8();
@@ -245,46 +283,53 @@ struct LuaCodec<QMap<QString, T>> {
     }
 };
 template <class T> struct LuaCodec<QHash<QString, T>> {
-  static QHash<QString, T> read(const luabridge::LuaRef &value) {
-    const auto map = LuaCodec<QMap<QString, T>>::read(value);
-    QHash<QString, T> result;
-    for (auto it = map.begin(); it != map.end(); ++it) {
-      result.insert(it.key(), it.value());
+    inline static QHash<QString, T> read(const luabridge::LuaRef &value) {
+        const auto map = LuaCodec<QMap<QString, T>>::read(value);
+        QHash<QString, T> result;
+        for (auto it = map.begin(); it != map.end(); ++it) {
+            result.insert(it.key(), it.value());
+        }
+        return result;
     }
-    return result;
-  }
-  static luabridge::LuaRef write(lua_State *L, const QHash<QString, T> &value) {
-    QMap<QString, T> sorted;
-    for (auto it = value.begin(); it != value.end(); ++it) {
-      sorted.insert(it.key(), it.value());
+
+    inline static luabridge::LuaRef write(lua_State *L,
+                                          const QHash<QString, T> &value) {
+        QMap<QString, T> sorted;
+        for (auto it = value.begin(); it != value.end(); ++it) {
+            sorted.insert(it.key(), it.value());
+        }
+        return LuaCodec<QMap<QString, T>>::write(L, sorted);
     }
-    return LuaCodec<QMap<QString, T>>::write(L, sorted);
-  }
 };
-template <class T> T qtFromLua(const luabridge::LuaRef &value) {
-  return LuaCodec<T>::read(value);
+
+template <class T>
+inline T qtFromLua(const luabridge::LuaRef &value) {
+    return LuaCodec<T>::read(value);
 }
-template <class T> luabridge::LuaRef qtOwnedToLua(lua_State *L, T *value) {
-  return LuaCodec<T *>::write(L, value, true);
+
+template <class T>
+inline luabridge::LuaRef qtOwnedToLua(lua_State *L, T *value) {
+    return LuaCodec<T *>::write(L, value, true);
 }
-template <class T> luabridge::LuaRef qtToLua(lua_State *L, const T &value) {
-  return LuaCodec<T>::write(L, value);
+
+template <class T>
+inline luabridge::LuaRef qtToLua(lua_State *L, const T &value) {
+    return LuaCodec<T>::write(L, value);
 }
 } // namespace qtluau
 
 // Distinct argument types let LuaBridge resolve equal-arity overloads before
 // invoking them, while keeping all Qt conversion in the shared codecs.
 namespace qtluau {
-template <class T, auto... Values>
-struct QtArgument {
-    T value;
+template <class T, auto... Values> struct QtArgument {
+  T value;
 };
 } // namespace qtluau
 namespace luabridge {
 template <class T, auto... Values>
 struct Stack<qtluau::QtArgument<T, Values...>> {
-    static TypeResult<qtluau::QtArgument<T, Values...>> get(lua_State *L,
-                                                            int index) {
+    inline static TypeResult<qtluau::QtArgument<T, Values...>> get(lua_State *L,
+                                                                   int index) {
         try {
             auto value = qtluau::qtFromLua<T>(LuaRef::fromStack(L, index));
             if constexpr (sizeof...(Values) > 0) {
@@ -297,11 +342,13 @@ struct Stack<qtluau::QtArgument<T, Values...>> {
             return makeErrorCode(ErrorCode::InvalidTypeCast);
         }
     }
-    static bool isInstance(lua_State *L, int index) {
+
+    inline static bool isInstance(lua_State *L, int index) {
         return bool(get(L, index));
     }
-    static Result push(lua_State *L,
-                       const qtluau::QtArgument<T, Values...> &value) {
+
+    inline static Result push(lua_State *L,
+                              const qtluau::QtArgument<T, Values...> &value) {
         qtluau::qtToLua(L, value.value).push();
         return {};
     }

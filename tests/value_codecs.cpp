@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // See LICENSE in the project root for license information.
 
-#include "static_registration.hpp"
+#include <iostream>
 
-#include "qtluau/value_conversion.hpp"
 #include <QApplication>
 #include <QColor>
-#include <iostream>
+
+#include "qtluau/value_conversion.hpp"
+
+#include "static_registration.hpp"
 
 namespace {
 void require(bool result, const char *message) {
@@ -16,6 +18,7 @@ void require(bool result, const char *message) {
   }
 }
 } // namespace
+
 int main(int argc, char **argv) {
   QApplication app(argc, argv);
   lua_State *L = luaL_newstate();
@@ -54,13 +57,21 @@ int main(int argc, char **argv) {
       require(rejected && lua_gettop(L) == top,
               "Fractional integer or stack imbalance");
       const QList<qlonglong> signedValues = {
-          std::numeric_limits<qlonglong>::min(), 9007199254740993LL,
+          std::numeric_limits<qlonglong>::min(),
+          -9007199254740993LL,
+          -9007199254740991LL,
+          -2147483649LL,
+          2147483648LL,
+          9007199254740991LL,
+          9007199254740992LL,
+          9007199254740993LL,
           std::numeric_limits<qlonglong>::max()};
       require(qtluau::qtFromLua<QList<qlonglong>>(
                   qtluau::qtToLua(L, signedValues)) == signedValues,
               "Signed 64-bit roundtrip failed");
       const QList<qulonglong> unsignedValues = {
-          0, std::numeric_limits<qulonglong>::max()};
+          0, 4294967295ULL, 9007199254740991ULL, 9007199254740993ULL,
+          std::numeric_limits<qulonglong>::max()};
       require(qtluau::qtFromLua<QList<qulonglong>>(
                   qtluau::qtToLua(L, unsignedValues)) == unsignedValues,
               "Unsigned 64-bit roundtrip failed");

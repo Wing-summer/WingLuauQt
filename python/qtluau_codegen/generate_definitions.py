@@ -34,9 +34,11 @@ from .catalog import (
 from .declaration_tables import merge_namespace_declarations
 from .extensions import definitions as extension_definitions
 from .function_naming import rename_declarations
+from .luau_definitions import class_definition
 from .models import (
     ClassDefinition,
     JsonObject,
+    Method,
     Parameters,
     object_field,
     object_list_field,
@@ -78,20 +80,7 @@ def constructor_type(name: str, definition: ClassDefinition, string_alias: str =
 def class_def(name: str, metadata: ClassDefinition) -> str:
     """Render a native class surface as Luau declarations."""
     base = metadata.get("base")
-    parent = f" extends _qt_{base}" if base else ""
-    lines = [f"declare extern type _qt_{name}{parent} with"]
-    # Method property intersections preserve overloads, including identical arity.
-    groups: dict[str, list[str]] = {}
-    for method, params, result in metadata["methods"]:
-        args: list[str] = []
-        for n, t in params:
-            args.append(f"{n}: {t}")
-        receiver = f"self: _qt_{name}" + (", " if args else "")
-        groups.setdefault(method, []).append(f"(({receiver}{', '.join(args)}) -> {result})")
-    for method, signatures in groups.items():
-        lines.append(f"    {method}: " + " & ".join(dict.fromkeys(signatures)))
-    lines.append("end")
-    return "\n".join(lines)
+    return class_definition(f"_qt_{name}", metadata["methods"], f"_qt_{base}" if base else None)
 
 
 def member_excluded(excluded: set[str], class_name: str, member_name: str) -> bool:
@@ -316,27 +305,37 @@ def generate(
     for name in ordered_types:
         builtins.append(class_def(name, metadata[name]))
     common_lines: list[str] = []
+    integer_type = "Integer64"
+    operand = "number | Integer64"
+    integer_methods: list[Method] = [
+        (method, [("other", operand)], integer_type)
+        for method in ("__add", "__sub", "__mul", "__div", "__idiv", "__mod", "band", "bor", "bxor")
+    ]
+    integer_methods.extend((method, [("other", integer_type)], "boolean")
+                           for method in ("__eq", "__lt", "__le"))
+    integer_methods.extend((method, [], integer_type) for method in ("__unm", "bnot"))
+    integer_methods.extend((method, [], "string") for method in ("to_string", "to_hex"))
+    integer_methods.extend((method, [], "number") for method in ("to_number", "high", "low"))
+    integer_methods.extend((method, [("count", "number")], integer_type)
+                           for method in ("lshift", "rshift", "arshift"))
+    common_lines.append(class_definition(integer_type, integer_methods))
+    for integer_name, alias in (("int64", "Int64"), ("uint64", "UInt64")):
+        common_lines.append(f"type {alias} = {integer_type}")
+        common_lines.append(f"declare {integer_name}: (value: string | {operand}) -> {alias}")
     lines = [f"declare {namespace}: {{"]
     for canonical, adapter in COMMON_ADAPTERS.items():
         policy = policies[canonical]
         alias = policy["alias"]
         enabled = policy["enabled"] and canonical not in excluded
         type_name = alias if enabled else "_qtluau_" + TYPE_DEFAULTS[canonical]["alias"]
-        common_definition = [f"declare extern type {type_name} with"]
-        for method, params, result in adapter["methods"]:
-            if (
-                ("*" not in policy["methods"] and method not in policy["methods"])
-                or member_excluded(excluded_members, canonical, method)
-                or member_excluded(excluded_members, alias, method)
-            ):
-                continue
-            arguments = ", ".join(
-                f"{name}: {kind.replace('$self', type_name)}" for name, kind in params
-            )
-            common_definition.append(
-                f"    function {method}(self{', ' if arguments else ''}{arguments}): {result}"
-            )
-        common_definition.append("end")
+        methods = [
+            (method, [(name, kind.replace("$self", type_name)) for name, kind in params], result)
+            for method, params, result in adapter["methods"]
+            if ("*" in policy["methods"] or method in policy["methods"])
+            and not member_excluded(excluded_members, canonical, method)
+            and not member_excluded(excluded_members, alias, method)
+        ]
+        common_definition = [class_definition(type_name, methods)]
         if enabled:
             constructors: list[str] = []
             for parameters in adapter["constructors"]:
@@ -362,17 +361,13 @@ def generate(
         common_lines.append("\n".join(common_definition))
     variant_name = "_qtluau_QVariant"
     variant_methods = VARIANT_METHODS
-    variant_lines = [f"declare extern type {variant_name} with"]
     variant_policy = policies["QVariant"]
-    for method, result in variant_methods.items():
-        if (
-            ("*" in variant_policy["methods"] or method in variant_policy["methods"])
-            and not member_excluded(excluded_members, "QVariant", method)
-            and not member_excluded(excluded_members, variant_policy["alias"], method)
-        ):
-            variant_lines.append(f"    function {method}(self): {result}")
-    variant_lines.append("end")
-    common_lines.append("\n".join(variant_lines))
+    common_lines.append(class_definition(variant_name, [
+        (method, [], result) for method, result in variant_methods.items()
+        if ("*" in variant_policy["methods"] or method in variant_policy["methods"])
+        and not member_excluded(excluded_members, "QVariant", method)
+        and not member_excluded(excluded_members, variant_policy["alias"], method)
+    ]))
     if variant_policy["enabled"] and "QVariant" not in excluded:
         alias = variant_policy["alias"]
         signature = (

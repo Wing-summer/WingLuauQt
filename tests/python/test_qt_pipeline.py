@@ -59,8 +59,7 @@ def main() -> None:
         assert "QPushButton" in report["selected"]
         assert 'QStringLiteral("QColumnView")' in (out / "ui_loader.cpp").read_text()
         assert not (out / "qt_ui_widgets.inc").exists()
-        assert "QMainWindow" not in report["selected"]
-        assert "QDialog" not in report["selected"]
+        assert set(config["qt"]["host_windows"]) <= set(report["selected"])
         assert "QFont" in report["dependencies"] and "QColor" in report["dependencies"]
         assert resolved["_generated"]["types"]["QPushButton"]["methods"]
         assert any(m[0] == "setFont" for m in resolved["_generated"]["types"]["QWidget"]["methods"])
@@ -69,9 +68,9 @@ def main() -> None:
         generate(resolved, out / "definitions")
         qt = (out / "definitions/qt.d.luau").read_text()
         assert "set_font" in qt and "_qt_QFont" in qt
-        assert "QMainWindow:" not in qt
-        assert "add_items:" in qt and "item_data:" in qt
-        assert "begin:" not in qt and "constBegin:" not in qt
+        assert all(f"{name}:" in qt for name in config["qt"]["host_windows"])
+        assert "function add_items(" in qt and "function item_data(" in qt
+        assert "function begin(" not in qt and "function constBegin(" not in qt
         aliases = copy.deepcopy(resolved)
         aliases["common"]["types"]["QVariant"]["alias"] = "boxed"
         assert common_types(aliases)["QVariant"]["alias"] == "boxed"

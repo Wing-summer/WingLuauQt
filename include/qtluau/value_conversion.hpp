@@ -19,6 +19,12 @@
 #include <type_traits>
 
 namespace qtluau {
+// A QVariant carrier preserves QObject lifetime checks across VM boundaries.
+struct QObjectValue {
+    QPointer<QObject> object;
+    std::function<void()> guard;
+    bool readOnly = false;
+};
 struct VariantBox {
   QVariant value;
   bool isValid() const;
@@ -354,5 +360,7 @@ struct Stack<qtluau::QtArgument<T, Values...>> {
     }
 };
 } // namespace luabridge
+
+Q_DECLARE_METATYPE(qtluau::QObjectValue)
 
 #endif // QTLUAU_INCLUDE_QTLUAU_VALUE_CONVERSION_HPP

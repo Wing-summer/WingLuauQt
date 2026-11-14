@@ -71,6 +71,8 @@ class Cursor(Protocol):
     spelling: str
     #: Enclosing semantic declaration.
     semantic_parent: Cursor | None
+    #: First declaration, including the original owner of reopened namespaces.
+    canonical: Cursor
     #: Source location of the declaration.
     location: Location
     #: Native member visibility.
@@ -176,9 +178,8 @@ class Members(TypedDict):
     access: dict[str, str]
 
 
-def scan_members(header: pathlib.Path, flags: list[str]) -> dict[str, Members]:
-    """Parse headers with libclang and retain declared member access metadata."""
-    clang = cast(Clang, importlib.import_module("clang.cindex"))
+def compiler_arguments(flags: list[str]) -> list[str]:
+    """Build declaration scanner arguments using libclang's bundled SDK headers."""
     args = ["-x", "c++", "-std=c++17", *flags]
     if shutil.which("clang++"):
         args.append("-resource-dir=" + command(["clang++", "-print-resource-dir"]))
@@ -193,6 +194,13 @@ def scan_members(header: pathlib.Path, flags: list[str]) -> dict[str, Members]:
                     "-isystem" + str(native / "resource/include"),
                 ]
             )
+    return args
+
+
+def scan_members(header: pathlib.Path, flags: list[str]) -> dict[str, Members]:
+    """Parse headers with libclang and retain declared member access metadata."""
+    clang = cast(Clang, importlib.import_module("clang.cindex"))
+    args = compiler_arguments(flags)
     unit = clang.Index.create().parse(str(header), args=args, options=0x200 | 0x40)
     errors = [d.spelling for d in unit.diagnostics if d.severity >= 3]
     if errors:

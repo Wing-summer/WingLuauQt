@@ -132,6 +132,7 @@ add_test(NAME extension_definitions COMMAND "${CMAKE_COMMAND}" -E env "PYTHONPAT
 add_test(NAME extension_definition_syntax COMMAND QtLuauDefinitionTests "${qtluau_extension_fixture}/definitions/qtluau.d.luau")
 set_tests_properties(extension_definition_syntax PROPERTIES DEPENDS extension_definitions)
 qtluau_python_test(extension_generation_policy test_extensions)
+qtluau_python_test(extension_pointer_factories test_extension_pointers)
 add_test(NAME extension_definition_usage COMMAND QtLuauDefinitionTests
   "${qtluau_extension_fixture}/definitions/qtluau.d.luau" "--probe=${CMAKE_CURRENT_SOURCE_DIR}/extension_usage.luau")
 set_tests_properties(extension_definition_usage PROPERTIES DEPENDS extension_definitions)
@@ -151,3 +152,5 @@ qtluau_python_test(wrapper_declaration_contract test_wrapper_contract)
 
 qtluau_python_test(configure_generation_cache test_generation_cache)
 qtluau_python_test(generation_input_watchers test_generation_inputs)
+qtluau_python_test(sdk_scan_metadata test_sdk_scan)
+qtluau_python_test(compiled_member_exclusions test_exclusions)

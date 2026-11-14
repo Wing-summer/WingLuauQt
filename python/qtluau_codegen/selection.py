@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import fnmatch
 
-from .catalog import EXCLUDED_ALWAYS, HOST_WINDOW_TYPES, WIDGETS
+from .catalog import EXCLUDED_ALWAYS, HOST_WINDOW_TYPES, WIDGETS, initialize
 from .discovery import scan
 from .models import DiscoveryReport, JsonObject, NativeClass, object_field, string_list_field
 from .type_mapping import is_table_container
@@ -40,6 +40,7 @@ def resolve(
         classes, flags = scan(
             string_list_field(policy, "modules", ["QtCore", "QtGui", "QtWidgets"])
         )
+        initialize(classes)
         return config, classes, flags, {}
     if "source" in policy or "path" in policy:
         raise ValueError(
@@ -57,6 +58,7 @@ def resolve(
             raise ValueError("qt.discovery." + key + " must be an array of strings")
     modules = policy.get("modules", ["QtCore", "QtGui", "QtWidgets"])
     classes, flags = scan(modules)
+    initialize(classes)
     blacklist = (
         list(EXCLUDED_ALWAYS)
         + string_list_field(object_field(config, "exclude"), "classes")

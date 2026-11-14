@@ -7,13 +7,22 @@
 #include <QObject>
 #include <QPointer>
 #include <QThread>
+#include <functional>
 #include <memory>
 namespace qtluau {
 class QObjectRef {
 public:
   explicit QObjectRef(QObject *object, bool owned = false, bool readOnly = false)
       : lifetime_(std::make_shared<Lifetime>(object, owned, readOnly)) {}
+  void setAccessGuard(std::function<void()> guard) {
+      guard_ = std::move(guard);
+  }
+  std::function<void()> accessGuard() const { return guard_; }
+  bool isReadOnly() const { return lifetime_->readOnly; }
   QObject *get() const {
+      if (guard_) {
+          guard_();
+      }
     auto *object = lifetime_->object.data();
     if (!object) {
       throw std::runtime_error("QObject has been deleted");
@@ -48,6 +57,7 @@ private:
     }
   };
   std::shared_ptr<Lifetime> lifetime_;
+  std::function<void()> guard_;
 };
 } // namespace qtluau
 #endif // QTLUAU_INCLUDE_QTLUAU_QOBJECT_VALUE_HPP

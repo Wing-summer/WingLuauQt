@@ -18,12 +18,13 @@ from .models import (
     ClassDefinition,
     JsonObject,
     Method,
+    NativeClass,
     NativeMethod,
     Parameters,
     object_field,
     string_list_field,
 )
-from .native_values import value_methods
+from .native_values import ValueMethod, value_methods
 from .type_mapping import mapped_type
 from .wrapper_contract import wrapper_methods
 
@@ -104,132 +105,154 @@ def _constructors(name: str) -> list[Parameters]:
 _root = support_root()
 _defaults: JsonObject = json.loads((_root / "config/bindings.json").read_text())
 _wrapper_methods = wrapper_methods()
-_native, _flags = scan(["QtCore", "QtGui", "QtWidgets"])
-# Shared SDK records for optional generated value binding surfaces.
-NATIVE_CLASSES = dict(_native)
-_generic_methods = _wrapper_methods["QtWidgetRef"]
 _default_blacklist = string_list_field(
     object_field(object_field(_defaults, "qt"), "discovery"), "blacklist"
 )
 HOST_WINDOW_TYPES = set(string_list_field(object_field(_defaults, "qt"), "host_windows"))
 _safety_exclusions = set(string_list_field(object_field(_defaults, "exclude"), "classes")) | HOST_WINDOW_TYPES
-WIDGET_NATIVE_NAMES = {
-    name
-    for name in _native
-    if _ancestors(name) & {"QWidget", "QLayout"}
-    and not (_ancestors(name) & _safety_exclusions)
-    and not any(fnmatch.fnmatchcase(name, pattern) for pattern in _default_blacklist)
-}
-WIDGET_NATIVE_NAMES.update(HOST_WINDOW_TYPES)
-WIDGETS: dict[str, ClassDefinition] = {}
-for _name in sorted(
-    WIDGET_NATIVE_NAMES, key=lambda name: (name not in {"QWidget", "QLayout"}, name)
-):
-    _base = (
-        None
-        if _name in {"QWidget", "QLayout"}
-        else ("QLayout" if "QLayout" in _ancestors(_name) else "QWidget")
-    )
-    _methods = list(_wrapper_methods["QtWidgetRef"].values()) if _name == "QWidget" else []
-    WIDGETS[_name] = {"base": _base, "methods": _methods, "constructors": _constructors(_name)}
-for _name in sorted(WIDGET_NATIVE_NAMES):
-    if "QWidget" in _ancestors(_name):
-        WIDGETS["QWidget"]["methods"].append(
-            ("findChild" + _name[1:], [("objectName", "string")], "_qt_" + _name)
-        )
-
-OBJECT_TYPE: ClassDefinition = {
-    "base": None,
-    "methods": list(_wrapper_methods["QObjectRef"].values()),
-    "constructors": [],
-}
-OBJECT_POINTERS = {name for name in _native if "QObject" in _ancestors(name)}
-LAYOUT_POINTERS = {name for name in OBJECT_POINTERS if "QLayout" in _ancestors(name)}
-WIDGET_POINTERS = {name for name in OBJECT_POINTERS if "QWidget" in _ancestors(name)}
-
-# Default aliases and safety rules are ordinary shipped policy, not API metadata.
 EXCLUDED_ALWAYS = set(string_list_field(object_field(_defaults, "exclude"), "classes"))
 DEFAULT_EXCLUDED_MEMBERS = string_list_field(object_field(_defaults, "exclude"), "members")
-DEFAULT_WIDGETS = [name for name, definition in WIDGETS.items() if definition["constructors"]]
 _common_types = object_field(object_field(_defaults, "common"), "types")
-BACKENDS: dict[str, dict[str, str]] = {
-    native: {"cpp_type": f"QtValueRef<{native}>"} for native in _common_types if native in _native
-}
 _variant_header = (_root / "include/qtluau/value_conversion.hpp").read_text()
 _variant_match = re.search(r"struct (\w+) \{\s*(Q\w+) value;", _variant_header)
 if _variant_match is None:
     raise ValueError("Missing native variant wrapper declaration")
 _variant_wrapper, _variant_native = _variant_match.groups()
-BACKENDS[_variant_native] = {"cpp_type": _variant_wrapper}
 VARIANT_METHODS = {name: method[2] for name, method in _wrapper_methods[_variant_wrapper].items()}
 TYPE_DEFAULTS: dict[str, dict[str, str]] = {
     native: {
         "alias": entry["alias"],
         "kind": "variant" if native == _variant_native else "userdata",
     }
-    for native, entry in object_field(object_field(_defaults, "common"), "types").items()
+    for native, entry in _common_types.items()
 }
-COMMON_NATIVE_METHODS = {
-    name: value_methods(name, _native[name])
-    for name in _common_types
-    if name in _native and name != _variant_native
+OBJECT_TYPE: ClassDefinition = {
+    "base": None,
+    "methods": list(_wrapper_methods["QObjectRef"].values()),
+    "constructors": [],
 }
-COMMON_ADAPTERS: dict[str, ClassDefinition] = {
-    native: {
-        "base": None,
-        "methods": [method.definition(native) for method in methods],
-        "constructors": [[], [("value", "string")], [("value", "$self")]],
-    }
-    for native, methods in COMMON_NATIVE_METHODS.items()
-}
-COMMON_CONSTRUCTOR_SIGNATURES = {native: native for native in COMMON_ADAPTERS}
+
+# SDK-derived containers keep their identity for existing importing consumers.
+_native: dict[str, NativeClass] = {}
+NATIVE_CLASSES: dict[str, NativeClass] = {}
+WIDGET_NATIVE_NAMES: set[str] = set()
+WIDGETS: dict[str, ClassDefinition] = {}
+OBJECT_POINTERS: set[str] = set()
+LAYOUT_POINTERS: set[str] = set()
+WIDGET_POINTERS: set[str] = set()
+DEFAULT_WIDGETS: list[str] = []
+BACKENDS: dict[str, dict[str, str]] = {}
+COMMON_NATIVE_METHODS: dict[str, list[ValueMethod]] = {}
+COMMON_ADAPTERS: dict[str, ClassDefinition] = {}
+COMMON_CONSTRUCTOR_SIGNATURES: dict[str, str] = {}
 VALUE_TYPES: dict[str, ClassDefinition] = {}
 VALUE_NATIVE_METHODS: dict[str, list[tuple[NativeMethod, int]]] = {}
-for _name, _record in _native.items():
-    _mapping = mapped_type(_name)
-    if _mapping is None or _mapping[:2] != (_name, "_qt_" + _name):
-        continue
-    BACKENDS[_name] = {"cpp_type": _name}
-    _value_methods: list[Method] = []
-    _native_methods: list[tuple[NativeMethod, int]] = []
-    for _method in _record["methods"]:
-        if (
-            _method["static"]
-            or _method["deprecated"]
-            or _method["variadic"]
-            or not _method["name"].isidentifier()
-        ):
-            continue
-        _return = mapped_type(_method["result"], True)
-        if _return is None:
-            continue
-        for _count in range(
-            _method.get("minimum_args", len(_method["args"])), len(_method["args"]) + 1
-        ):
-            _args = [mapped_type(arg) for arg in _method["args"][:_count]]
-            if any(arg is None for arg in _args):
-                continue
-            _value_methods.append(
-                (
-                    _method["name"],
-                    [(f"arg{i}", arg[1]) for i, arg in enumerate(_args) if arg is not None],
-                    _return[1],
-                )
-            )
-            _native_methods.append((_method, _count))
-    VALUE_TYPES[_name] = {
-        "base": None,
-        "methods": _value_methods,
-        "constructors": _constructors(_name),
-    }
-    VALUE_NATIVE_METHODS[_name] = _native_methods
-for _name in WIDGETS:
-    BACKENDS[_name] = {
-        "cpp_type": ("Qt" + _name[1:] + "Ref")
-        if _name in {"QWidget", "QLayout"}
-        else (
-            f"QtTypedLayoutRef<{_name}>"
-            if "QLayout" in _ancestors(_name)
-            else f"QtTypedWidgetRef<{_name}>"
+
+
+def initialize(classes: dict[str, NativeClass] | None = None) -> None:
+    """Populate SDK-derived catalogs once, when generation actually needs them.
+
+    Use supplied classes from the active SDK snapshot, or discover the shipped
+    default modules for direct callers. Importing CLI modules and spawned parser
+    workers must not launch SDK scans. Existing dictionaries and sets are updated
+    in place for importing callers. Compiler failures propagate to the caller.
+    """
+    if _native:
+        return
+    if classes is None:
+        modules = string_list_field(object_field(object_field(_defaults, "qt"), "discovery"), "modules")
+        classes, _ = scan(modules)
+    _native.update(classes)
+    NATIVE_CLASSES.update(classes)
+    WIDGET_NATIVE_NAMES.update({
+        name
+        for name in _native
+        if _ancestors(name) & {"QWidget", "QLayout"}
+        and not (_ancestors(name) & _safety_exclusions)
+        and not any(fnmatch.fnmatchcase(name, pattern) for pattern in _default_blacklist)
+    })
+    WIDGET_NATIVE_NAMES.update(HOST_WINDOW_TYPES)
+    for _name in sorted(
+        WIDGET_NATIVE_NAMES, key=lambda name: (name not in {"QWidget", "QLayout"}, name)
+    ):
+        _base = (
+            None
+            if _name in {"QWidget", "QLayout"}
+            else ("QLayout" if "QLayout" in _ancestors(_name) else "QWidget")
         )
-    }
+        _methods = list(_wrapper_methods["QtWidgetRef"].values()) if _name == "QWidget" else []
+        WIDGETS[_name] = {"base": _base, "methods": _methods, "constructors": _constructors(_name)}
+    for _name in sorted(WIDGET_NATIVE_NAMES):
+        if "QWidget" in _ancestors(_name):
+            WIDGETS["QWidget"]["methods"].append(
+                ("findChild" + _name[1:], [("objectName", "string")], "_qt_" + _name)
+            )
+
+    OBJECT_POINTERS.update(name for name in _native if "QObject" in _ancestors(name))
+    LAYOUT_POINTERS.update(name for name in OBJECT_POINTERS if "QLayout" in _ancestors(name))
+    WIDGET_POINTERS.update(name for name in OBJECT_POINTERS if "QWidget" in _ancestors(name))
+    DEFAULT_WIDGETS.extend(name for name, definition in WIDGETS.items() if definition["constructors"])
+    BACKENDS.update({native: {"cpp_type": f"QtValueRef<{native}>"} for native in _common_types if native in _native})
+    BACKENDS[_variant_native] = {"cpp_type": _variant_wrapper}
+    COMMON_NATIVE_METHODS.update({
+        name: value_methods(name, _native[name])
+        for name in _common_types
+        if name in _native and name != _variant_native
+    })
+    COMMON_ADAPTERS.update({
+        native: {
+            "base": None,
+            "methods": [method.definition(native) for method in methods],
+            "constructors": [[], [("value", "string")], [("value", "$self")]],
+        }
+        for native, methods in COMMON_NATIVE_METHODS.items()
+    })
+    COMMON_CONSTRUCTOR_SIGNATURES.update({native: native for native in COMMON_ADAPTERS})
+    for _name, _record in _native.items():
+        _mapping = mapped_type(_name)
+        if _mapping is None or _mapping[:2] != (_name, "_qt_" + _name):
+            continue
+        BACKENDS[_name] = {"cpp_type": _name}
+        _value_methods: list[Method] = []
+        _native_methods: list[tuple[NativeMethod, int]] = []
+        for _method in _record["methods"]:
+            if (
+                _method["static"]
+                or _method["deprecated"]
+                or _method["variadic"]
+                or not _method["name"].isidentifier()
+            ):
+                continue
+            _return = mapped_type(_method["result"], True)
+            if _return is None:
+                continue
+            for _count in range(
+                _method.get("minimum_args", len(_method["args"])), len(_method["args"]) + 1
+            ):
+                _args = [mapped_type(arg) for arg in _method["args"][:_count]]
+                if any(arg is None for arg in _args):
+                    continue
+                _value_methods.append(
+                    (
+                        _method["name"],
+                        [(f"arg{i}", arg[1]) for i, arg in enumerate(_args) if arg is not None],
+                        _return[1],
+                    )
+                )
+                _native_methods.append((_method, _count))
+        VALUE_TYPES[_name] = {
+            "base": None,
+            "methods": _value_methods,
+            "constructors": _constructors(_name),
+        }
+        VALUE_NATIVE_METHODS[_name] = _native_methods
+    for _name in WIDGETS:
+        BACKENDS[_name] = {
+            "cpp_type": ("Qt" + _name[1:] + "Ref")
+            if _name in {"QWidget", "QLayout"}
+            else (
+                f"QtTypedLayoutRef<{_name}>"
+                if "QLayout" in _ancestors(_name)
+                else f"QtTypedWidgetRef<{_name}>"
+            )
+        }

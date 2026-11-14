@@ -143,6 +143,18 @@ QVariant read(lua_State *L, int index, ReadContext &context, int depth) {
     if (auto font = value.cast<QFont>()) {
       return QVariant::fromValue(*font);
     }
+    if (auto object = value.cast<QObjectRef>()) {
+        return QVariant::fromValue(QObjectValue{
+            object->get(), object->accessGuard(), object->isReadOnly()});
+    }
+    if (auto widget = value.cast<QtWidgetRef>()) {
+        return QVariant::fromValue(
+            QObjectValue{widget->get(), widget->accessGuard(), false});
+    }
+    if (auto layout = value.cast<QtLayoutRef>()) {
+        return QVariant::fromValue(
+            QObjectValue{layout->get(), layout->accessGuard(), false});
+    }
     break;
   }
   }
@@ -155,6 +167,36 @@ void push(lua_State *L, const QVariant &value, int depth, size_t &nodes) {
   }
   if (!lua_checkstack(L, 8)) {
     throw std::invalid_argument("Luau stack exhausted during Qt conversion");
+  }
+  if (value.metaType() == QMetaType::fromType<QObjectValue>()) {
+      const auto borrowed = value.value<QObjectValue>();
+      if (borrowed.guard) {
+          borrowed.guard();
+      }
+      if (!borrowed.object ||
+          borrowed.object->thread() != QThread::currentThread()) {
+          throw std::runtime_error(
+              "Borrowed QObject has expired or belongs to another thread");
+      }
+      if (auto *widget = qobject_cast<QWidget *>(borrowed.object.data())) {
+          pushQtWidget(L, widget, false);
+          auto reference =
+              luabridge::LuaRef::fromStack(L, -1).cast<QtWidgetRef *>();
+          if (!reference) {
+              throw std::runtime_error("Cannot wrap borrowed widget");
+          }
+          (*reference)->setAccessGuard(borrowed.guard);
+      } else if (auto *layout =
+                     qobject_cast<QLayout *>(borrowed.object.data())) {
+          QtLayoutRef reference(layout, false);
+          reference.setAccessGuard(borrowed.guard);
+          luabridge::LuaRef(L, reference).push();
+      } else {
+          QObjectRef reference(borrowed.object, false, borrowed.readOnly);
+          reference.setAccessGuard(borrowed.guard);
+          luabridge::LuaRef(L, reference).push();
+      }
+      return;
   }
   switch (value.metaType().id()) {
   case QMetaType::UnknownType:

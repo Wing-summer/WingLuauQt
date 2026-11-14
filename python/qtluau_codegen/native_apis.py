@@ -16,41 +16,98 @@ import hashlib
 import json
 import pathlib
 import re
+from typing import TYPE_CHECKING, NamedTuple
 
-from .catalog import NATIVE_CLASSES
+from .catalog import NATIVE_CLASSES, initialize
 from .discovery import discover_sdk
 from .extensions import identifier, paths, write
 from .models import JsonObject, object_field, object_list_field, string_list_field
 from .module_policy import requires_module
 from .type_mapping import mapped_type
 
+if TYPE_CHECKING:
+    from tsujikiri.parse_cache import ParseCache, ParseKey
 
-def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) -> list[JsonObject]:
-    """Scan application native APIs and emit typed callback contracts and definitions."""
+
+def selected_namespaces(entry: JsonObject) -> list[str]:
+    """Derive exact parser scopes from configured native symbols.
+
+    Include enclosing namespace prefixes because a qualifier may also name a
+    class. An unqualified symbol explicitly selects the global scope.
+    """
+    symbols = [
+        *string_list_field(entry, "classes"),
+        *object_field(entry, "types"),
+        *object_field(entry, "enum_types"),
+        *object_field(entry, "functions"),
+    ]
+    scopes: set[str] = set()
+    for symbol in symbols:
+        parts = symbol.split("::")[:-1]
+        if not parts:
+            scopes.add("")
+        scopes.update("::".join(parts[:count]) for count in range(1, len(parts) + 1))
+    return sorted(scopes) or [""]
+
+
+class NativeApiScans(NamedTuple):
+    """Keep prefetched upstream IR and ordered parse keys for one export."""
+
+    #: Per-export upstream parse cache.
+    cache: ParseCache
+    #: Keys in native API configuration order.
+    keys: list[ParseKey]
+
+
+def prefetch_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) -> NativeApiScans:
+    """Prepare native sources and parse independent inputs with tsujikiri's pool.
+
+    Return a per-export IR cache; raise ValueError if any input fails to parse.
+    No binding policy, shared SDK catalog or registration output is modified.
+    """
     from tsujikiri.configurations import SourceConfig
+    from tsujikiri.parse_cache import ParseCache, ParseKey
+
+    keys: list[ParseKey] = []
+    for index, entry in enumerate(object_list_field(config, "native_apis")):
+        headers = paths(base, string_list_field(entry, "headers"))
+        directories = paths(base, string_list_field(entry, "include_dirs"))
+        flags = [
+            "-std=c++20",
+            *discover_sdk(["QtCore", "QtGui", "QtWidgets"]),
+            *["-I" + str(directory) for directory in directories],
+        ]
+        source = out / f"native_scan_{index}.hpp"
+        source.write_text("\n".join(f'#include "{header}"' for header in headers))
+        keys.append(
+            ParseKey.from_source(
+                SourceConfig(path=str(source), parse_args=flags), selected_namespaces(entry), "native"
+            )
+        )
+    cache = ParseCache(jobs=2)
+    errors: list[str] = []
+    cache.prefetch(keys, clang_errors=errors)
+    if errors:
+        raise ValueError("Cannot scan native APIs:\n" + "\n".join(errors))
+    return NativeApiScans(cache, keys)
+
+
+def emit_native_apis(
+    config: JsonObject, out: pathlib.Path, base: pathlib.Path, scans: NativeApiScans | None = None
+) -> list[JsonObject]:
+    """Scan application native APIs and emit typed callback contracts and definitions."""
     from tsujikiri.ir import IRFunction, IRMethod
-    from tsujikiri.parser import parse_translation_unit_ir
 
     entries = object_list_field(config, "native_apis")
+    if entries:
+        initialize()
+    scans = scans if scans is not None else prefetch_native_apis(config, out, base)
     metadata: list[JsonObject] = []
     declarations = ["#pragma once", '#include "qtluau/packages.hpp"', "#include <functional>"]
     generated: set[str] = set()
     for index, entry in enumerate(entries):
         headers = paths(base, string_list_field(entry, "headers"))
-        include_dirs = paths(base, string_list_field(entry, "include_dirs"))
-        flags = [
-            "-std=c++20",
-            *discover_sdk(["QtCore", "QtGui", "QtWidgets"]),
-            *["-I" + str(d) for d in include_dirs],
-        ]
-        scan = out / f"native_scan_{index}.hpp"
-        scan.write_text("\n".join(f'#include "{p}"' for p in headers))
-        errors: list[str] = []
-        ir = parse_translation_unit_ir(
-            SourceConfig(path=str(scan), parse_args=flags), [], "native", clang_errors=errors
-        )
-        if errors:
-            raise ValueError("Cannot scan native APIs:\n" + "\n".join(errors))
+        ir = scans.cache.get(scans.keys[index])
         classes = {c.qualified_name: c for c in ir.classes}
         types = object_field(entry, "types")
         aliases = {
@@ -449,7 +506,7 @@ def emit_native_apis(config: JsonObject, out: pathlib.Path, base: pathlib.Path) 
             )
             + "\n",
         )
-        scan.unlink()
+        pathlib.Path(scans.keys[index].path).unlink()
     for stale in out.glob("native_*.cpp"):
         if stale.name not in generated:
             stale.unlink()

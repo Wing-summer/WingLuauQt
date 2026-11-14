@@ -14,6 +14,7 @@ import re
 import shutil
 import sys
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 
 from .assets import support_root
 from .callback_bindings import emit_callbacks
@@ -29,7 +30,7 @@ from .lua_c_api import emit_lua_c_apis
 from .models import JsonObject, object_field, object_list_field, string_list_field
 from .module_definitions import module_definitions
 from .module_policy import qt_namespace, requires_module
-from .native_apis import emit_native_apis
+from .native_apis import emit_native_apis, prefetch_native_apis
 from .project_output import project_files, project_output
 from .qt_pipeline import emit
 from .sdk_version import validate_version
@@ -355,11 +356,17 @@ def _export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path
     output.mkdir(parents=True, exist_ok=True)
     shutil.copy2(root / "LICENSE", output / "LICENSE")
     generated = output / "generated"
-    resolved = emit(config, generated, base)
-    definitions_dir = output / "definitions"
-    generate(resolved, definitions_dir)
+    generated.mkdir(exist_ok=True)
+    # Native interface parses do not depend on the SDK binding policy. Prefetch
+    # their IR while Qt scanning and definition generation occupy the caller.
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="qtluau-native") as executor:
+        native_scans = executor.submit(prefetch_native_apis, config, generated, base)
+        resolved = emit(config, generated, base)
+        definitions_dir = output / "definitions"
+        generate(resolved, definitions_dir)
+        scans = native_scans.result()
     metadata = object_list_field(resolved, "_extensions")
-    metadata.extend(emit_native_apis(config, generated, base))
+    metadata.extend(emit_native_apis(config, generated, base, scans))
     extra_metadata, extra_definitions = extra_bindings(config, generated, base)
     framework_metadata, framework_definitions = emit_framework_bindings(config, generated)
     extra_metadata.extend(framework_metadata)

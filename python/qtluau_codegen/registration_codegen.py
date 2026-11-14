@@ -23,6 +23,7 @@ from .catalog import (
     VALUE_TYPES,
     VARIANT_METHODS,
     WIDGETS,
+    initialize,
 )
 from .cpp_literals import qt_list
 from .exclusions import excluded_method
@@ -43,6 +44,7 @@ def emit_registrations(config: JsonObject, out: pathlib.Path, namespace: str = "
     """
     if any(not part.isidentifier() or not part.isascii() for part in namespace.split("::")):
         raise ValueError("Invalid registration namespace")
+    initialize()
     qt = object_field(config, "qt")
     module = qt_namespace(config)
     widgets = object_field(qt, "widgets")

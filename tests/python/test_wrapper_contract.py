@@ -21,6 +21,12 @@ def main() -> None:
         header.parent.mkdir(parents=True)
         header.write_text("""class QtWidgetRef {
 public:
+  void check() const {
+    if (guard_) {
+      guard_();
+    }
+    const auto text = "{ignored}";
+  }
   void setCaption(const std::string &caption);
   QtTypedWidgetRef<QNewControl> findChildNewControl(const std::string &name) const;
   luabridge::LuaRef property(const std::string &name, lua_State *L) const;
@@ -29,6 +35,7 @@ public:
         with patch("qtluau_codegen.wrapper_contract.support_root", return_value=root):
             methods = wrapper_methods()
         widget = methods["QtWidgetRef"]
+        assert "guard_" not in widget and "check" not in widget
         assert widget["setCaption"] == ("setCaption", [("caption", "string")], "()")
         assert widget["findChildNewControl"][2] == "_qt_QNewControl"
         assert widget["property"][1] == [("name", "string")]

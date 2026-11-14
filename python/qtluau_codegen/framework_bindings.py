@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from typing import cast
 
 from .assets import support_root
-from .catalog import BACKENDS, NATIVE_CLASSES, TYPE_DEFAULTS, VALUE_TYPES, WIDGETS
+from .catalog import BACKENDS, NATIVE_CLASSES, TYPE_DEFAULTS, VALUE_TYPES, WIDGETS, initialize
 from .discovery import SDK_CONTAINER_ALIASES, SDK_ENUMS, SDK_FLAGS, SDK_FUNCTIONS
 from .exclusions import excluded_method
 from .extensions import identifier, write
@@ -55,6 +55,7 @@ class SdkBindings:
 
     def __init__(self, config: JsonObject) -> None:
         """Initialize generation policy without a maintained API member list."""
+        initialize()
         self.config = config
         self.module = qt_namespace(config)
         self.policies = common_types(config)

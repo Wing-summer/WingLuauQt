@@ -8,7 +8,7 @@ import pathlib
 import tempfile
 import unittest
 
-from qtluau_codegen.catalog import NATIVE_CLASSES
+from qtluau_codegen.catalog import NATIVE_CLASSES, initialize
 from qtluau_codegen.discovery import SDK_ENUMS
 from qtluau_codegen.framework_bindings import SdkBindings, emit_framework_bindings
 from qtluau_codegen.models import JsonObject, NativeClass, NativeMethod
@@ -16,6 +16,11 @@ from qtluau_codegen.models import JsonObject, NativeClass, NativeMethod
 
 class SignalCodegenTests(unittest.TestCase):
     """Exercise generic facilities without maintaining a native socket API list."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Initialize the SDK before installing per-test catalog overrides."""
+        initialize()
 
     def test_public_using_keeps_base_overloads(self) -> None:
         """Retain C++ using declarations while preserving normal name hiding."""

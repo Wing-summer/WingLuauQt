@@ -51,3 +51,62 @@ CMake 在扫描前校验生成输入及已发布产物的内容。无改动时�
 Use `-DWINGLUAUQT_FORCE_GENERATION=ON` to force a scan, then switch it back to `OFF` for normal reuse. The first configure and input-changing configures still perform full discovery. Standalone framework configuration emits runtime bindings and definitions in one Python process, avoiding a second SDK initialization. The CLI exposes the same combined operation through `qtluau_codegen.qt_pipeline --definitions-out <directory>`.
 
 需要强制扫描时使用 `-DWINGLUAUQT_FORCE_GENERATION=ON`，随后改回 `OFF` 恢复正常复用。首次配置及输入变化后的配置仍执行完整扫描。框架独立配置在同一 Python 进程中生成运行时绑定与类型定义，避免第二次 SDK 初始化；命令行也可通过 `qtluau_codegen.qt_pipeline --definitions-out <directory>` 执行合并生成。
+
+## Scan performance / 扫描性能
+
+SDK catalogs initialize when generation needs them, rather than during module
+imports or CLI help. The main process extracts global declarations while one
+spawned worker inventories SDK-owned namespaces and extracts their declarations.
+Parsing uses tsujikiri's `SourceConfig`, `ParseKey`, `parse_worker` and
+`merge_modules`; signals and public using declarations come directly from its
+IR. The supplemental pass retains only compiler facts absent from that IR:
+canonical aliases, macro-deleted constructors and namespace ownership.
+
+SDK 目录在生成时按需初始化，导入模块和查看命令行帮助不会启动扫描。主进程
+提取全局声明，同时一个通过 spawn 启动的工作进程发现 SDK 所属命名空间并
+提取其声明。解析复用 tsujikiri 的 `SourceConfig`、`ParseKey`、`parse_worker`
+和 `merge_modules`，信号与公开 using 声明直接取自 IR。补充扫描仅保留该 IR
+尚未提供的编译器信息：规范化别名、通过宏删除的构造函数及命名空间归属。
+
+Canonical namespace declarations distinguish SDK-owned scopes from namespaces
+reopened by SDK headers, avoiding a standard-library blacklist. The pinned
+0.33.0 dependency has no public scope-inventory API; one typed compatibility
+boundary reuses its `_iter_scope_decls` traversal so nested and inline namespace
+semantics remain identical to its parser. No parser monkey-patching or copied
+extraction implementation is used. Native API parser scopes are derived from
+configured qualified symbols rather than a maintained namespace allowlist.
+
+使用命名空间的规范声明判断其是否属于 SDK，避免把 SDK 头文件重新打开的
+标准库命名空间误认为 SDK 本身，不维护标准库黑名单。当前固定依赖 0.33.0
+没有公开的命名空间清点接口，因此通过一个带类型约束的兼容边界复用其
+`_iter_scope_decls` 遍历，保持嵌套与 inline 命名空间的处理语义一致；不修改
+解析器运行时行为，也不复制声明提取实现。宿主 API 的解析范围由配置中的完整
+符号名推导，不维护命名空间白名单。
+
+Native interfaces are prefetched concurrently with Qt generation through
+`ParseCache(jobs=2).prefetch()` and consumed in configuration order. Repeated
+extension headers with identical compiler flags share one member scan within
+an export. SDK catalogs reuse the active module snapshot instead of first
+scanning the default component set. Member exclusion policies are compiled
+into literal indexes and wildcard regular expressions; signature normalization
+runs once per pattern snapshot, rather than once per pattern and candidate.
+
+宿主接口通过 tsujikiri 的 `ParseCache(jobs=2).prefetch()` 与 Qt 生成并行执行，
+结果按配置顺序使用。同次导出中，编译参数相同的重复扩展头文件复用成员扫描。
+SDK 目录直接使用当前模块集合的扫描结果，不再先扫描一遍默认组件。
+成员排除规则预编译为精确查询集合和通配符正则表达式；规则签名在配置快照编译时
+规范化一次，避免为每个候选成员重新规范化整组规则。
+
+All parses skip function bodies and reject compiler errors. Results are merged,
+diagnostics replayed and files emitted by the caller in a stable order. No new
+configuration is required. SDK scanning can retain two Clang translation units;
+native prefetch adds up to two more workers. Per-export IR and member caches
+are released with the export. CMake's complete-output cache still handles
+unchanged configures; measure full generation, SDK scanning and cache hits
+separately.
+
+所有扫描跳过函数体，并检查编译错误；结果合并、诊断输出及文件生成仍由调用
+线程按稳定顺序完成。不需要新增配置；SDK 扫描可同时驻留两个 Clang 翻译单元，
+宿主预取最多增加两个工作进程。同次导出使用的 IR 和成员缓存随导出结束释放。
+CMake 的完整产物缓存继续处理未变动的配置；应分别测量完整工程生成、SDK 扫描
+及命中缓存的耗时。

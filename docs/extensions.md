@@ -73,3 +73,17 @@ Use class rule `binding: "functions"` with member-name `include`/`exclude` patte
 Q_PROPERTY 按公开元对象契约处理；同名 getter 不重复暴露，只读属性不生成 setter。构造默认关闭，已由宿主编译的实现使用 reference 模式并关闭重复 MOC。自定义 QDialog 可以 expose_base 为 QWidget；所有对象继续遵循 QPointer 生命周期、所有权及线程检查。
 
 函数式服务绑定可以按 include/exclude 分类，并注入前置 QObject 上下文参数。宿主的原生回调用 callback_sets 描述；native 函数指针与声明由同一配置生成，详见生成工程文档。
+
+## Selected QObject pointer results / 已选 QObject 指针结果
+
+An extension method may return or accept a mutable pointer to another explicitly selected QObject extension. The generator keeps the selected extension type in declarations and creates a borrowed QtObjectRef/QtTypedWidgetRef, rather than losing it to a generic QObject. Register the returned type's owning module before invoking its factory. Null results become nil; ownership stays with the host. Unselected pointers remain generation errors.
+
+扩展方法可以返回或接收另一个明确选中的 QObject 扩展的可变指针。生成器保留声明中的具体扩展类型，并创建借用的 QtObjectRef/QtTypedWidgetRef，不降级成通用 QObject。调用工厂前须注册返回类型所属模块；空指针转 nil，所有权留在宿主。未选中的指针类型仍在生成阶段报错。
+
+Hosts may install per-VM LuaCallbackHooks for admission and completion of signal and std::function callbacks. A false admission result skips delivery. Completion reports the Luau status and error after the invocation thread has been released. Clear callbacks before closing the VM; cleanup also releases the hooks.
+
+宿主可以安装每 VM 的 LuaCallbackHooks，控制信号及 std::function 回调的进入和完成。进入返回 false 时跳过投递，完成时报告 Luau 状态和错误，且调用线程引用已释放。关闭 VM 前清理回调，清理同时释放这些钩子。
+
+QObjectValue is the QVariant carrier for borrowed QObject/widget/layout references. It retains QPointer and an optional per-reference access guard; the receiving VM wraps it without adopting ownership. Hosts can chain an exporter-lifetime check onto that guard. The guard belongs to the individual wrapper, not the shared widget ownership token, so it does not revoke unrelated wrappers of the same native object.
+
+QObjectValue 用于在 QVariant 中保存借用的 QObject、控件和布局引用，保留 QPointer 和可选的逐引用访问检查，接收 VM 不接管所有权。宿主可以叠加导出方生命周期检查；检查属于具体包装，而不属于共享控件所有权令牌，因此不影响同一原生对象的无关包装。

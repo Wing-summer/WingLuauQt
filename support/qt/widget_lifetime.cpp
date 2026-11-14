@@ -74,6 +74,9 @@ QtWidgetRef::QtWidgetRef(QWidget *widget, bool owned)
   }
 }
 QWidget *QtWidgetRef::get() const {
+    if (guard_) {
+        guard_();
+    }
   QWidget *p = lifetime_ ? lifetime_->widget.data() : nullptr;
   if (!p) {
     throw std::runtime_error("Qt widget has already been destroyed");
@@ -93,6 +96,9 @@ QtLayoutRef::QtLayoutRef(QLayout *layout, bool owned)
   }
 }
 QLayout *QtLayoutRef::get() const {
+    if (guard_) {
+        guard_();
+    }
   QLayout *p = lifetime_ ? lifetime_->layout.data() : nullptr;
   if (!p) {
     throw std::runtime_error("Qt layout has already been destroyed");

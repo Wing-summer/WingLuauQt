@@ -21,7 +21,7 @@ from .class_codegen import render_members
 from .discovery import discover_sdk
 from .exclusions import excluded_method
 from .luau_definitions import class_definition
-from .member_scan import scan_members
+from .member_scan import Members, scan_members
 from .models import JsonObject, object_field, object_list_field, string_list_field
 from .type_policy import KEYWORDS
 
@@ -89,6 +89,16 @@ def emit_extensions(config: JsonObject, out: pathlib.Path, base: pathlib.Path) -
     manifest_id = hashlib.sha256(
         (json.dumps(entries, sort_keys=True) + str(base)).encode()
     ).hexdigest()[:12]
+    extension_types: dict[str, tuple[str, str]] = {}
+    for selected in entries:
+        module = str(selected.get("module", ""))
+        for native in object_field(selected, "classes"):
+            raw = object_field(object_field(selected, "classes"), native)
+            if raw.get("binding") == "functions":
+                continue
+            name = str(raw.get("name", native.rsplit("::", 1)[-1]))
+            reference = "QtTypedWidgetRef" if raw.get("expose_base") == "QWidget" else "QtObjectRef"
+            extension_types[native] = (f"_ext_{module}_{name}", f"{reference}<{native}>")
     metadata: list[JsonObject] = []
     declarations = ["#pragma once", '#include "qtluau/bindings.hpp"', "namespace qtluau {"]
     registrations: list[str] = []
@@ -99,6 +109,7 @@ def emit_extensions(config: JsonObject, out: pathlib.Path, base: pathlib.Path) -
     defines: set[str] = set()
     generated: set[str] = set()
     exposed_names: set[tuple[str, str]] = set()
+    member_cache: dict[tuple[pathlib.Path, tuple[str, ...]], dict[str, Members]] = {}
     native_names: set[str] = set()
     friend_names: set[str] = set()
     for entry in entries:
@@ -147,7 +158,11 @@ def emit_extensions(config: JsonObject, out: pathlib.Path, base: pathlib.Path) -
         ]
         for header in headers:
             inputs.add(header)
-            native_members = scan_members(header, flags)
+            member_key = (header, tuple(flags))
+            native_members = member_cache.get(member_key)
+            if native_members is None:
+                native_members = scan_members(header, flags)
+                member_cache[member_key] = native_members
             key = hashlib.sha256((str(header) + namespace).encode()).hexdigest()[:12]
             moc_key = hashlib.sha256(json.dumps([str(header), flags]).encode()).hexdigest()[:12]
             moc_name = f"qt_ext_moc_{moc_key}.cpp"
@@ -270,6 +285,7 @@ def emit_extensions(config: JsonObject, out: pathlib.Path, base: pathlib.Path) -
                     registrations.append(f"register_{symbol}(L);")
                 cpp = [
                     '#include "qtluau/bindings.hpp"',
+                    '#include "qt_extensions.hpp"',
                     '#include "qtluau/widget_wrappers.hpp"',
                     '#include "qtluau/value_conversion.hpp"',
                     '#include "qtluau/object_ref.hpp"',
@@ -318,6 +334,7 @@ def emit_extensions(config: JsonObject, out: pathlib.Path, base: pathlib.Path) -
                     native_members[native],
                     string_list_field(object_field(config, "exclude"), "members"),
                     "Access_" + symbol,
+                    extension_types,
                 )
                 if functions and not methods:
                     raise ValueError(
@@ -377,6 +394,12 @@ def emit_extensions(config: JsonObject, out: pathlib.Path, base: pathlib.Path) -
             raise ValueError(f"Extension classes absent from moc metadata: {sorted(missing)}")
     declarations.extend(
         [
+            "template<class T> luabridge::LuaRef qtToLuaExtension(lua_State *L, T *object) {",
+            "if (!object) return luabridge::LuaRef(L);",
+            "pushExtensionObject(L, object, false);",
+            "auto value = luabridge::LuaRef::fromStack(L, -1);",
+            "lua_pop(L, 1); return value;",
+            "}",
             f"inline void registerGeneratedExtensions_{manifest_id}(lua_State *L) {{",
             "(void)L;",
             *registrations,

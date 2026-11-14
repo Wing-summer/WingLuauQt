@@ -28,8 +28,19 @@ def render_members(
     members: Members,
     excluded: list[str],
     helper_name: str,
+    extension_types: dict[str, tuple[str, str]] | None = None,
 ) -> tuple[list[str], list[str], list[JsonObject], list[JsonObject]]:
     """Render selected QObject members with the configured access strategy."""
+    def convert(spelling: str, result: bool = False) -> tuple[str, str, str] | None:
+        """Convert explicitly selected extension pointers without losing their type."""
+        pointer = re.fullmatch(r"\s*([A-Za-z_][A-Za-z0-9_:]*)\s*\*\s*", spelling)
+        if pointer and extension_types and pointer[1] in extension_types:
+            alias, reference = extension_types[pointer[1]]
+            if result:
+                return ("luabridge::LuaRef", alias, "qtToLuaExtension(L, {expr})")
+            return (reference, alias, "({expr}.requireWritable(), {expr}.get())")
+        return mapped_type(spelling, result)
+
     included = string_list_field(rule, "include", ["*"])
     omitted = string_list_field(rule, "exclude")
 
@@ -117,7 +128,7 @@ def render_members(
         ]:
             raise ValueError(f"Context argument prefix mismatch: {native}::{name}")
         selected["args"] = native_args[len(context) :]
-        types = [mapped_type(selected["result"], True), *[mapped_type(a) for a in selected["args"]]]
+        types = [convert(selected["result"], True), *[convert(a) for a in selected["args"]]]
         if not all(types) or selected["variadic"] or (use_meta and len(native_args) > 10):
             raise ValueError(
                 f"Unsupported member signature: {native}::{name}; exclude it explicitly"
@@ -216,8 +227,8 @@ def render_members(
         if name in groups:
             raise ValueError(f"Method/property name collision: {native}::{name}")
         typ: str = prop["type"]
-        result = mapped_type(typ, True)
-        argument = mapped_type(typ)
+        result = convert(typ, True)
+        argument = convert(typ)
         if result is None or argument is None:
             raise ValueError(f"Unsupported property: {native}::{name} ({typ})")
         state = ", lua_State *L" if "qtToLua" in result[2] else ""

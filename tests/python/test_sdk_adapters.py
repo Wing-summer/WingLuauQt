@@ -8,7 +8,7 @@ import pathlib
 import tempfile
 import unittest
 
-from qtluau_codegen.catalog import NATIVE_CLASSES
+from qtluau_codegen.catalog import NATIVE_CLASSES, initialize
 from qtluau_codegen.framework_bindings import SdkBindings, emit_framework_bindings
 from qtluau_codegen.models import JsonObject, NativeMethod
 
@@ -21,6 +21,11 @@ def method(name: str, const: bool = False) -> NativeMethod:
 
 
 class SdkAdapterTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Initialize the SDK before installing per-test catalog overrides."""
+        initialize()
+
     def setUp(self) -> None:
         """Install an isolated native record without replacing real SDK records."""
         self.had_qobject = "QObject" in NATIVE_CLASSES

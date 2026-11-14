@@ -10,6 +10,7 @@
 #include <QPointer>
 #include <QThread>
 #include <QWidget>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <type_traits>
@@ -63,21 +64,31 @@ public:
   QtWidgetRef() : QtWidgetRef(detail::makeQtWidget<QWidget>()) {}
   explicit QtWidgetRef(QWidget *widget, bool owned = true);
   QWidget *get() const;
+  void setAccessGuard(std::function<void()> guard) {
+      guard_ = std::move(guard);
+  }
+  std::function<void()> accessGuard() const { return guard_; }
   void connect(const std::string &signal, luabridge::LuaRef callback);
   luabridge::LuaRef property(const std::string &name, lua_State *L) const;
   bool setProperty(const std::string &name, const luabridge::LuaRef &value);
 
 protected:
   std::shared_ptr<WidgetLifetime> lifetime_;
+  std::function<void()> guard_;
 };
 class QtLayoutRef {
 public:
   QtLayoutRef();
   explicit QtLayoutRef(QLayout *layout, bool owned = true);
   QLayout *get() const;
+  void setAccessGuard(std::function<void()> guard) {
+      guard_ = std::move(guard);
+  }
+  std::function<void()> accessGuard() const { return guard_; }
 
-protected:
+  protected:
   std::shared_ptr<LayoutLifetime> lifetime_;
+  std::function<void()> guard_;
 };
 // Native methods and child lookup registrations are generated from the SDK.
 template <class Native, class Base> class QtTypedRef : public Base {

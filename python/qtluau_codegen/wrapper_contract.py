@@ -33,6 +33,30 @@ def _type(spelling: str, parameter: str = "") -> str:
     raise ValueError(f"Unsupported wrapper contract type: {spelling}")
 
 
+def _declarations(body: str) -> str:
+    """Mask inline bodies so formatted implementation calls are not methods."""
+    result: list[str] = []
+    depth = 0
+    previous = 0
+    for token in re.finditer(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[{}]', body):
+        if depth == 0:
+            result.append(body[previous:token.start()])
+        value = token.group()
+        if value == "{":
+            if depth == 0:
+                result.append("{}")
+            depth += 1
+        elif value == "}":
+            depth -= 1
+        elif depth == 0:
+            result.append(value)
+        previous = token.end()
+    if depth != 0:
+        raise ValueError("Unbalanced inline wrapper body")
+    result.append(body[previous:])
+    return "".join(result)
+
+
 def wrapper_methods() -> dict[str, dict[str, Method]]:
     """Return generic bridge method signatures from maintained declarations.
 
@@ -56,6 +80,7 @@ def wrapper_methods() -> dict[str, dict[str, Method]]:
         wrapper, body = entry.groups()
         methods: dict[str, Method] = {}
         body = re.sub(r"//[^\n]*", "", body.split("protected:")[0].split("private:")[0])
+        body = _declarations(body)
         for declaration in re.finditer(
             r"([\w:< >*&]+?)\s+(\w+)\(([^;{}]*)\)\s*(?:const)?\s*;", body
         ):

@@ -29,6 +29,7 @@ from .catalog import (
     VALUE_TYPES,
     VARIANT_METHODS,
     WIDGETS,
+    initialize,
     load_class,
 )
 from .declaration_tables import merge_namespace_declarations
@@ -153,6 +154,7 @@ def generate(
 
         with tempfile.TemporaryDirectory(prefix="qtluau-policy-") as temporary:
             config = emit(config, pathlib.Path(temporary), config_dir)
+    initialize()
     available = copy.deepcopy(WIDGETS)
     for name, raw_definition in object_field(object_field(config, "_generated"), "types").items():
         definition = load_class(raw_definition)

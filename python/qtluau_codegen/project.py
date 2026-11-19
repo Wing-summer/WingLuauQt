@@ -294,6 +294,32 @@ def validate_output(config: JsonObject, output: pathlib.Path, base: pathlib.Path
                             )
 
 
+def emit_definition_copy_script(output: pathlib.Path, name: str) -> None:
+    """Deploy the complete definition set, including files emitted by the host."""
+    definitions = output / "definitions"
+    filenames = " ".join(
+        quote(path.name)
+        for path in sorted(definitions.iterdir())
+        if path.is_file()
+        and (path.name.endswith(".d.luau") or path.match("*_symbols*.json"))
+    )
+    write(output / "copy_definitions.cmake", f"""cmake_minimum_required(VERSION 3.24)
+# Generated definition deployment and stale-output cleanup.
+file(MAKE_DIRECTORY "${{DESTINATION}}")
+set(_expected {filenames})
+file(GLOB _previous "${{DESTINATION}}/{name}_*.d.luau" "${{DESTINATION}}/{name}_symbols*.json")
+foreach(_path IN LISTS _previous)
+  get_filename_component(_file "${{_path}}" NAME)
+  if(NOT _file IN_LIST _expected)
+    file(REMOVE "${{_path}}")
+  endif()
+endforeach()
+foreach(_file IN LISTS _expected)
+  file(COPY_FILE "${{SOURCES}}/${{_file}}" "${{DESTINATION}}/${{_file}}" ONLY_IF_DIFFERENT)
+endforeach()
+""")
+
+
 def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path,
                    postprocess: Callable[[JsonObject, pathlib.Path], None] | None = None) -> JsonObject:
     """Publish one complete project, optionally applying a host generation step."""
@@ -302,6 +328,7 @@ def export_project(config: JsonObject, output: pathlib.Path, base: pathlib.Path,
         manifest = _export_project(config, staging, base)
         if postprocess is not None:
             postprocess(manifest, staging)
+        emit_definition_copy_script(staging, str(manifest["name"]))
         generation_inputs(config, staging, base)
     return manifest
 
@@ -789,22 +816,6 @@ target_include_directories({name} PUBLIC
 target_compile_definitions({name} PUBLIC {" ".join(quote(d) for d in defines)})
 target_link_libraries({name} PUBLIC {qt_libraries} Luau.VM ${{_qtluau_luabridge}} {"Luau.Compiler " if execution_helper else ""}Threads::Threads {" ".join(host_targets)})
 """
-    filenames = " ".join(quote(filename) for filename in sorted(expected_definitions))
-    write(output / "copy_definitions.cmake", f"""cmake_minimum_required(VERSION 3.24)
-# Generated definition deployment and stale-output cleanup.
-file(MAKE_DIRECTORY "${{DESTINATION}}")
-set(_expected {filenames})
-file(GLOB _previous "${{DESTINATION}}/{name}_*.d.luau" "${{DESTINATION}}/{name}_symbols*.json")
-foreach(_path IN LISTS _previous)
-  get_filename_component(_file "${{_path}}" NAME)
-  if(NOT _file IN_LIST _expected)
-    file(REMOVE "${{_path}}")
-  endif()
-endforeach()
-foreach(_file IN LISTS _expected)
-  file(COPY_FILE "${{SOURCES}}/${{_file}}" "${{DESTINATION}}/${{_file}}" ONLY_IF_DIFFERENT)
-endforeach()
-""")
     cmake += f"""
 set({name}_DEFINITIONS_DIR {quote(definition_directory)} CACHE STRING "Definition directory relative to the executable, or an absolute path")
 target_compile_definitions({name} PRIVATE "QTLUAU_DEFINITION_DIRECTORY=\\\"${{{name}_DEFINITIONS_DIR}}\\\"")

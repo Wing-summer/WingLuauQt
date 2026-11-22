@@ -147,3 +147,69 @@ function(wingluauqt_integrate)
   endif()
   install(FILES ${_definition_files} DESTINATION "${_destination}" COMPONENT LuauDefinitions)
 endfunction()
+
+# Stage and deploy the host's filesystem Luau modules with its generator.
+function(wingluauqt_deploy_modules)
+  if(POLICY CMP0174)
+    cmake_policy(SET CMP0174 NEW)
+  endif()
+  cmake_parse_arguments(PARSE_ARGV 0 ARG ""
+    "TARGET;DEPLOY_TARGET;SOURCE_DIR;GENERATOR;DEPLOY_DIR;PATH_DEFINE" "EXTRA_FILES;PUBLIC_MODULES")
+  if(ARG_UNPARSED_ARGUMENTS OR ARG_KEYWORDS_MISSING_VALUES OR
+     NOT ARG_TARGET OR NOT TARGET "${ARG_TARGET}" OR NOT ARG_DEPLOY_TARGET OR
+     NOT ARG_SOURCE_DIR OR NOT ARG_GENERATOR)
+    message(FATAL_ERROR "wingluauqt_deploy_modules requires an existing TARGET, DEPLOY_TARGET, SOURCE_DIR and GENERATOR")
+  endif()
+
+  get_filename_component(_source "${ARG_SOURCE_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+  get_filename_component(_generator "${ARG_GENERATOR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+  set(_module_dir "luaulib")
+  set(_runtime_dir "$<TARGET_FILE_DIR:${ARG_TARGET}>/${_module_dir}")
+  set(_lookup_dir "${_module_dir}")
+  if(ARG_DEPLOY_DIR)
+    get_filename_component(_runtime_dir "${ARG_DEPLOY_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+    set(_lookup_dir "${_runtime_dir}")
+  endif()
+  if(ARG_PATH_DEFINE)
+    target_compile_definitions("${ARG_TARGET}" PRIVATE "${ARG_PATH_DEFINE}=\"${_lookup_dir}\"")
+  endif()
+
+  set(_install_dir "${_module_dir}")
+  get_target_property(_bundle "${ARG_TARGET}" MACOSX_BUNDLE)
+  if(APPLE AND _bundle)
+    get_target_property(_executable "${ARG_TARGET}" OUTPUT_NAME)
+    if(NOT _executable)
+      set(_executable "${ARG_TARGET}")
+    endif()
+    set(_install_dir "${_executable}.app/Contents/MacOS/${_module_dir}")
+  endif()
+
+  set(_extra_files)
+  foreach(_extra IN LISTS ARG_EXTRA_FILES)
+    get_filename_component(_absolute "${_extra}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    list(APPEND _extra_files "${_absolute}")
+  endforeach()
+  set(_copy_extras)
+  if(_extra_files)
+    set(_copy_extras
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${_runtime_dir}"
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${_extra_files} "${_runtime_dir}")
+    install(FILES ${_extra_files} DESTINATION "${_install_dir}" COMPONENT LuauModules)
+  endif()
+
+  find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter)
+  set(_stage "${CMAKE_CURRENT_BINARY_DIR}/${ARG_DEPLOY_TARGET}-stage")
+  set(_module_args)
+  foreach(_module IN LISTS ARG_PUBLIC_MODULES)
+    list(APPEND _module_args --public-module "${_module}")
+  endforeach()
+  add_custom_target("${ARG_DEPLOY_TARGET}" ALL
+    COMMAND "${Python3_EXECUTABLE}" "${_generator}" --source "${_source}"
+      --output "${_stage}" --deploy "${_runtime_dir}" ${_module_args}
+    ${_copy_extras}
+    DEPENDS "${_generator}" ${_extra_files}
+    VERBATIM)
+  add_dependencies("${ARG_TARGET}" "${ARG_DEPLOY_TARGET}")
+  install(DIRECTORY "${_stage}/" DESTINATION "${_install_dir}" COMPONENT LuauModules
+    PATTERN ".wing-luaulib.json" EXCLUDE)
+endfunction()

@@ -39,6 +39,14 @@ The resolved policy becomes selected C++ registration statements. Exported libra
 
 注册策略直接生成成已选定的 C++ 注册语句；交付库不包含策略 JSON 资源或运行时配置解析器。公共头文件不导出注册配置模型；注册函数不接收配置对象。调整绑定接口时修改生成输入并重新生成。
 
+To deploy filesystem modules, call `wingluauqt_deploy_modules(TARGET app DEPLOY_TARGET app_modules SOURCE_DIR luaulib GENERATOR tools/modules.py)`. The Python generator receives `--source`, `--output` for staging, and `--deploy` for the build runtime directory. The helper installs the staged output and any `EXTRA_FILES` under `luaulib` beside the installed executable, excluding the deployment inventory. `DEPLOY_DIR` overrides the build runtime directory. `PATH_DEFINE` names the optional compile definition that reports the lookup directory to the executable.
+
+部署文件系统模块可调用上述 `wingluauqt_deploy_modules` 函数。宿主 Python 生成器接收源码目录 `--source`、暂存目录 `--output` 和构建运行时目录 `--deploy`。函数将暂存产物和 `EXTRA_FILES` 安装到可执行程序旁的 `luaulib`，并排除部署清单。`DEPLOY_DIR` 覆盖构建运行时目录，`PATH_DEFINE` 可指定供可执行程序读取查找路径的编译定义。
+
+A generator can publish its public module names as a JSON string array in `.luau-modules.json` in the staged output. The `qtluau::publicModuleNames()` helper reads it without inspecting private source files. Use `PUBLIC_MODULES` to pass additional names as repeated `--public-module` arguments to the generator.
+
+生成器可在暂存目录的 `.luau-modules.json` 中以 JSON 字符串数组发布公开模块名，运行时通过 `qtluau::publicModuleNames()` 读取。使用 `PUBLIC_MODULES` 可把额外的模块名作为重复的 `--public-module` 参数传给生成器。
+
 ## Runtime registration / 运行时注册
 
 Instance methods require `object:method(...)` or an explicit receiver, `object.method(object, ...)`. Missing, nil or incompatible receivers raise a catchable Luau error before native invocation. This applies to handwritten Qt adapters and generated class members.

@@ -66,6 +66,11 @@
         }
       }
     },
+    "painting": {
+      "classes": {
+        "QPainter": {}
+      }
+    },
     "dialogs": {
       "classes": {
         "QMessageBox": {

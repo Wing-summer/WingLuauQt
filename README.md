@@ -116,3 +116,7 @@ For a configured host driver, `wingluauqt_integrate(TARGET Host CONFIG codegen/g
 Optional SDK groups select root classes in `config/framework-bindings.json`; members and signature dependencies are scanned. An instance provider such as `QGuiApplication::clipboard` exposes the discovered methods as static `qt.QClipboard` functions, including image/pixmap access. No separate clipboard module is registered.
 
 可选 SDK 分组在配置中选择根类型，成员及签名依赖由扫描获得。实例提供者将发现的剪贴板方法生成为 `qt.QClipboard` 静态接口，包括图像与像素图访问；不注册独立 clipboard 模块。
+
+The `painting` group exposes `qt.QPainter`. Call `qt.QPainter.use(device, callback, ...)` with a `QImage` or, on the GUI thread, a `QPixmap`. The synchronous callback receives the active painter followed by any extra arguments. `use` returns the callback's results and ends painting even if the callback raises an error. Keep the target device unchanged until the callback returns.
+
+`painting` 分组提供 `qt.QPainter`。用 `qt.QPainter.use(device, callback, ...)` 绘制到 `QImage`，也可在 GUI 线程绘制到 `QPixmap`。同步回调接收已激活的画笔和额外参数。`use` 返回回调的结果，回调抛出错误时也会结束绘制。请在回调返回后再对目标设备执行其他操作。

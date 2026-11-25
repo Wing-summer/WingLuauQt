@@ -303,10 +303,16 @@ class SdkBindings:
         native = self.enum_type(bare, owner) or bare
         return native, converted, spelling.rstrip().endswith("*")
 
+    def paint_devices(self, native: str, static_only: bool) -> list[str]:
+        """Select the value devices supported by the scoped painter adapter."""
+        if native != "QPainter" or static_only:
+            return []
+        return [name for name in ("QImage", "QPixmap") if self.allowed(name)]
+
     def dependencies(self, native: str, static_only: bool = False) -> set[str]:
         """Find dependencies only through representable public signatures."""
         record = NATIVE_CLASSES[native]
-        result: set[str] = set()
+        result = set(self.paint_devices(native, static_only))
         for method in self.methods(native):
             if not self.method_allowed(native, method) or (static_only and not method["static"]):
                 continue
@@ -340,6 +346,9 @@ class SdkBindings:
             and not method["variadic"]
             and method["name"].isidentifier()
             and not method["name"].startswith("operator")
+            and not (native == "QPainter" and method["name"] in {
+                "begin", "end", "beginNativePainting", "endNativePainting"
+            })
             and not excluded_method(self.members, native, method["name"], method["args"])
         )
 
@@ -570,11 +579,13 @@ class SdkBindings:
                 raise ValueError("Invalid native instance provider: " + provider)
             includes.add(owner)
         includes.update(self.dependencies(native, static_only))
+        paint_devices = self.paint_devices(native, static_only)
         connector, signal_signatures = signal_connector(self, native) if self.object_type(native) and not static_only and not provider else ([], [])
         code = [
             '#include "qtluau/packages.hpp"',
             '#include "qtluau/object_ref.hpp"',
             '#include "qtluau/callback.hpp"',
+            *(['#include "qtluau/painter.hpp"'] if paint_devices else []),
             '#include <QMetaMethod>',
             *[f'#include "{header}"' for header in string_list_field(self.adapter(native), "includes")],
             *[f"#include <{name}>" for name in sorted(includes)],
@@ -672,11 +683,18 @@ class SdkBindings:
                     (method["name"], method["static"] or bool(provider)), {}
                 ).setdefault(checker, (expression, signature))
         instance: list[str] = []
+        fields: list[str] = []
+        if paint_devices:
+            code.append('cls.addStaticFunction("use", &usePainter);')
+            device_type = " | ".join(f"_qt_{name}" for name in paint_devices)
+            fields.append(
+                f"    use: <A..., R...>(device: {device_type}, "
+                "callback: (_qt_QPainter, A...) -> R..., A...) -> R...,"
+            )
         if signal_signatures:
             instance.append("    connect: " + " & ".join("(" + signature + ")" for signature in signal_signatures)
                             + f" & ((self: _qt_{native}, signal: string, callback: (...any) -> ()) -> ()),")
             code.append(f"registerSignalConnector(L, &{native}::staticMetaObject, &connect_sdk_{native});")
-        fields: list[str] = []
         for (name, static), overloads in methods.items():
             code.append(
                 f'cls.add{"Static" if static else ""}Function("{name}", '
